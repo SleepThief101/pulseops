@@ -249,3 +249,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Graphify generated knowledge graph
+graphify-out/
+# Graphify generated knowledge graph
+graphify-out/
