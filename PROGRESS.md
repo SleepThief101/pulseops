@@ -3,9 +3,9 @@
 ## Phase 0: Setup
 
 - [x] S01 - Accounts and tools
-- [ ] S02 - Repository and folder layout
-- [ ] S03 - Docker Compose
-- [ ] S04 - FastAPI hello world and health check
+- [x] S02 - Repository and folder layout
+- [x] S03 - Docker Compose
+- [x] S04 - FastAPI hello world and database health check
 
 ## Upcoming phases
 
