@@ -3,6 +3,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.session import engine
+from app.routers import auth as auth_router
+from app.routers.me import me_router
 
 # FastAPI application
 app = FastAPI(
@@ -10,6 +12,10 @@ app = FastAPI(
     description="AI-native control tower for small SaaS teams.",
     version="0.1.0",
 )
+
+# Routers
+app.include_router(auth_router.router)
+app.include_router(me_router)
 
 
 @app.get("/", tags=["General"])

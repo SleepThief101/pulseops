@@ -36,8 +36,39 @@ def test_test_engine_points_to_test_database(test_engine):
 
 
 def test_transaction_rollback_leaves_test_db_clean(test_engine):
-    """Verify test transaction rollback ensures no persistent rows leak into test DB."""
-    with test_engine.connect() as conn:
-        count = conn.execute(select(func.count(Organization.id))).scalar()
-        # All tests execute within rolled-back transactions
-        assert count == 0
+    """
+    Verify transaction rollback ensures uniquely identifiable rows created within
+    a transaction do not persist in the test database after rollback.
+    """
+    import uuid
+    from sqlalchemy.orm import Session
+
+    unique_org_name = f"Temporary-Rollback-Org-{uuid.uuid4()}"
+
+    # Create and flush the temporary organization within an explicit transaction
+    connection = test_engine.connect()
+    transaction = connection.begin()
+    session = Session(bind=connection, expire_on_commit=False)
+
+    try:
+        temp_org = Organization(name=unique_org_name)
+        session.add(temp_org)
+        session.flush()
+
+        # Confirm the row is visible within the uncommitted transaction
+        found_inside = session.scalar(
+            select(Organization).where(Organization.name == unique_org_name)
+        )
+        assert found_inside is not None
+        assert found_inside.name == unique_org_name
+    finally:
+        session.close()
+        transaction.rollback()
+        connection.close()
+
+    # In a separate connection, confirm the temporary organization does not exist
+    with test_engine.connect() as verify_conn:
+        found_after_rollback = verify_conn.execute(
+            select(Organization).where(Organization.name == unique_org_name)
+        ).scalar_one_or_none()
+        assert found_after_rollback is None

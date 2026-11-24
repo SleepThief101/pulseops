@@ -10,9 +10,11 @@
 ## Phase 1: Core Foundation
 
 - [x] S05 - Database models and first migration (Core models, Alembic initial migration, credential encryption, and isolated test database)
-- [ ] S06 - Authentication and RBAC
-- [ ] S07 - Multi-tenancy and organization isolation
-- [ ] S08 - Core API endpoints and schemas
+- [x] S06 - Authentication and JWT (Argon2id password hashing, HS256 JWT, register/login/me endpoints, 30 tests)
+- [ ] S07 - Organization membership and role checks
+- [ ] S08 - Tenant isolation tests
+- [ ] S09 - GitHub Actions CI
+- [ ] S10 - Structured logging and request IDs
 
 ## Upcoming phases
 

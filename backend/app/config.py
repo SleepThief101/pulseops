@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     redis_url: str
     integration_encryption_key: str | None = None
     test_database_url: str | None = None
+    jwt_secret_key: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),
