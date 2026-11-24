@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from app.core.auth import (
     get_password_hash,
     verify_password,
 )
+from app.core.logging import set_org_id, set_user_id
 from app.db.session import get_db
 from app.models.membership import Membership, MembershipRole
 from app.models.organization import Organization
@@ -38,7 +39,11 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
     status_code=status.HTTP_201_CREATED,
     summary="Register a new user and organization",
 )
-def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> RegisterResponse:
+def register(
+    payload: RegisterRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> RegisterResponse:
     """
     Create a new User, a new Organization, and an owner Membership in a single
     atomic transaction.
@@ -81,6 +86,12 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> Registe
     db.refresh(user)
     db.refresh(org)
 
+    if request is not None:
+        request.state.user_id = str(user.id)
+        request.state.org_id = str(org.id)
+    set_user_id(str(user.id))
+    set_org_id(str(org.id))
+
     return RegisterResponse(
         user_id=user.id,
         email=user.email,
@@ -96,7 +107,11 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> Registe
     response_model=TokenResponse,
     summary="Authenticate and receive a JWT",
 )
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
+def login(
+    payload: LoginRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
     """
     Verify credentials and return a signed HS256 JWT (1-hour expiry).
 
@@ -120,5 +135,8 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
         )
 
     token = create_access_token(user.id)
+    if request is not None:
+        request.state.user_id = str(user.id)
+    set_user_id(str(user.id))
     return TokenResponse(access_token=token)
 

@@ -142,12 +142,14 @@ def decode_access_token(token: str) -> uuid.UUID:
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
     db: Session = Depends(get_db),
+    request: Request = None,
 ) -> "User":  # type: ignore[name-defined]  # noqa: F821
     """
     FastAPI dependency: extract bearer token, validate it, and return the User.
 
     Raises 401 for invalid/expired tokens; 404 if the user no longer exists.
     """
+    from app.core.logging import set_user_id
     from app.models.user import User  # noqa: PLC0415
 
     user_id = decode_access_token(credentials.credentials)
@@ -157,6 +159,9 @@ def get_current_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found.",
         )
+    if request is not None:
+        request.state.user_id = str(user.id)
+    set_user_id(str(user.id))
     return user
 
 
@@ -175,6 +180,7 @@ def get_current_membership(
     org_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    request: Request = None,
 ) -> Membership:
     """
     FastAPI dependency: retrieve the authenticated user's membership in the
@@ -184,6 +190,8 @@ def get_current_membership(
         HTTPException 404: if the user is not a member of the organization,
         without revealing whether the organization ID exists.
     """
+    from app.core.logging import set_org_id
+
     membership = db.scalar(
         select(Membership).where(
             Membership.organization_id == org_id,
@@ -195,6 +203,9 @@ def get_current_membership(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Organization not found.",
         )
+    if request is not None:
+        request.state.org_id = str(membership.organization_id)
+    set_org_id(str(membership.organization_id))
     return membership
 
 
