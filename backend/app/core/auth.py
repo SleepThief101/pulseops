@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.membership import Membership, MembershipRole
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 

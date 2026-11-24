@@ -13,7 +13,7 @@
 - [x] S06 - Authentication and JWT (Argon2id password hashing, HS256 JWT, register/login/me endpoints, 30 tests)
 - [x] S07 - Organization membership and role checks (RBAC hierarchy, get_current_membership, require_role, add/list member endpoints, 19 tests)
 - [x] S08 - Tenant isolation tests (Multi-tenant cross-org boundary proofs, 404 obscurity, RBAC enforcement, model query isolation, 19 tests)
-- [ ] S09 - GitHub Actions CI
+- [x] S09 - GitHub Actions CI (Automated workflow for push and PR to main: PostgreSQL 16 & Redis 7 services, Gitleaks scan, Ruff lint checks, dedicated CI test database migrations, full pytest suite with 98 passing tests)
 - [ ] S10 - Structured logging and request IDs
 
 ## Upcoming phases

@@ -1,0 +1,21 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+exclude = [
+    ".git",
+    "alembic",
+    "backend/alembic",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+]
+ignore = [
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/*" = ["F401", "F841"]
+"backend/tests/*" = ["F401", "F841"]
