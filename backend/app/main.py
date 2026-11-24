@@ -1,17 +1,8 @@
-
 from fastapi import FastAPI, HTTPException
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.config import settings
-
-
-# Database connection
-engine = create_engine(
-    settings.database_url,
-    pool_pre_ping=True,
-)
-
+from app.db.session import engine
 
 # FastAPI application
 app = FastAPI(
