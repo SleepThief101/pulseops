@@ -5,6 +5,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.db.session import engine
 from app.routers import auth as auth_router
 from app.routers.me import me_router
+from app.routers.members import router as members_router
 
 # FastAPI application
 app = FastAPI(
@@ -16,6 +17,7 @@ app = FastAPI(
 # Routers
 app.include_router(auth_router.router)
 app.include_router(me_router)
+app.include_router(members_router)
 
 
 @app.get("/", tags=["General"])

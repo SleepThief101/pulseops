@@ -18,9 +18,11 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.models.membership import Membership, MembershipRole
 
 logger = logging.getLogger(__name__)
 
@@ -155,3 +157,77 @@ def get_current_user(
             detail="User not found.",
         )
     return user
+
+
+# ---------------------------------------------------------------------------
+# Organization Authorization dependencies (RBAC)
+# ---------------------------------------------------------------------------
+
+ROLE_HIERARCHY: dict[str, int] = {
+    MembershipRole.VIEWER.value: 1,
+    MembershipRole.MEMBER.value: 2,
+    MembershipRole.OWNER.value: 3,
+}
+
+
+def get_current_membership(
+    org_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Membership:
+    """
+    FastAPI dependency: retrieve the authenticated user's membership in the
+    specified organization.
+
+    Raises:
+        HTTPException 404: if the user is not a member of the organization,
+        without revealing whether the organization ID exists.
+    """
+    membership = db.scalar(
+        select(Membership).where(
+            Membership.organization_id == org_id,
+            Membership.user_id == current_user.id,
+        )
+    )
+    if membership is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found.",
+        )
+    return membership
+
+
+def require_role(required_role: str | MembershipRole):
+    """
+    Reusable FastAPI authorization dependency factory.
+
+    Verifies that the authenticated member holds at least the required role
+    in the requested organization based on the role hierarchy (owner > member > viewer).
+
+    Raises:
+        HTTPException 403: if the member's role is insufficient.
+        ValueError: if an unrecognized role is specified.
+    """
+    role_str = (
+        required_role.value
+        if isinstance(required_role, MembershipRole)
+        else str(required_role).strip().lower()
+    )
+    if role_str not in ROLE_HIERARCHY:
+        raise ValueError(
+            f"Invalid role: {required_role!r}. Allowed roles: {list(ROLE_HIERARCHY.keys())}"
+        )
+
+    def role_checker(
+        membership: Membership = Depends(get_current_membership),
+    ) -> Membership:
+        user_level = ROLE_HIERARCHY.get(membership.role, 0)
+        required_level = ROLE_HIERARCHY[role_str]
+        if user_level < required_level:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions for this organization.",
+            )
+        return membership
+
+    return role_checker
