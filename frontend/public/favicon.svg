@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#09090b" stroke="#27272a" stroke-width="1.5" />
+  <!-- Control tower beacon -->
+  <circle cx="16" cy="5.5" r="1.5" fill="#10b981" />
+  <!-- Control tower observation deck -->
+  <path
+    d="M7.5 10.5L10 7.5H22L24.5 10.5L22.5 14H9.5L7.5 10.5Z"
+    stroke="#f4f4f5"
+    stroke-width="1.75"
+    stroke-linejoin="round"
+  />
+  <!-- Signal pulse inside observation deck -->
+  <path
+    d="M10.5 10.8H13.2L14.8 8.7L16.8 12.9L18.4 10.8H21.5"
+    stroke="#10b981"
+    stroke-width="1.85"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- Structural tower pylons & base -->
+  <path
+    d="M11.5 14L10 25.5M20.5 14L22 25.5M7.5 25.5H24.5"
+    stroke="#f4f4f5"
+    stroke-width="1.75"
+    stroke-linecap="round"
+  />
+  <path
+    d="M16 14V25.5"
+    stroke="#52525b"
+    stroke-width="1.35"
+    stroke-linecap="round"
+  />
+</svg>

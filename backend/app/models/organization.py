@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.models.event import Event
     from app.models.membership import Membership
     from app.models.integration import Integration
 
@@ -42,6 +43,12 @@ class Organization(Base):
     )
     integrations: Mapped[list["Integration"]] = relationship(
         "Integration",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    events: Mapped[list["Event"]] = relationship(
+        "Event",
         back_populates="organization",
         cascade="all, delete-orphan",
         passive_deletes=True,

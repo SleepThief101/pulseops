@@ -99,10 +99,15 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*"),
         "[REDACTED_JWT]",
     ),
+    # PulseOps MCP API keys, Razorpay keys, GitHub tokens, and DeepSeek/OpenAI keys
+    (re.compile(r"pmcp_[A-Za-z0-9_-]{8,}"), "[REDACTED_MCP_KEY]"),
+    (re.compile(r"rzp_(?:test|live)_[A-Za-z0-9]{6,}"), "[REDACTED_RZP_KEY]"),
+    (re.compile(r"gh[pousr]_[A-Za-z0-9_]{8,}"), "[REDACTED_GITHUB_TOKEN]"),
+    (re.compile(r"sk-[A-Za-z0-9_-]{8,}"), "[REDACTED_API_KEY]"),
     # Sensitive JSON keys: "password": "...", "secret": "..."
     (
         re.compile(
-            r'("(?:password|secret|token|api_key|encryption_key|credentials)"\s*:\s*)"[^"]*"',
+            r'("(?:password|secret|token|api_key|key_secret|access_token|webhook_secret|encryption_key|credentials|x-api-key)"\s*:\s*)"[^"]*"',
             re.IGNORECASE,
         ),
         r'\1"[REDACTED]"',
@@ -110,7 +115,7 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Key-value assignments: password=..., jwt_secret_key=...
     (
         re.compile(
-            r"((?:password|jwt_secret_key|encryption_key|secret_key|api_key)\s*=\s*)[^\s,;]+",
+            r"((?:password|jwt_secret_key|encryption_key|secret_key|api_key|key_secret|access_token|webhook_secret|x-api-key)\s*=\s*)[^\s,;]+",
             re.IGNORECASE,
         ),
         r"\1[REDACTED]",
@@ -125,6 +130,27 @@ def sanitize_log_message(message: Any) -> str:
     for pattern, replacement in _SENSITIVE_PATTERNS:
         message = pattern.sub(replacement, message)
     return message
+
+
+def _sanitize_log_value(value: Any) -> Any:
+    """Recursively sanitize nested dicts and lists attached via log extras."""
+    if isinstance(value, str):
+        return sanitize_log_message(value)
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for k, v in value.items():
+            k_lower = str(k).lower()
+            if any(
+                s in k_lower
+                for s in ("password", "secret", "token", "api_key", "encryption_key", "credentials")
+            ):
+                sanitized[str(k)] = "[REDACTED]"
+            else:
+                sanitized[str(k)] = _sanitize_log_value(v)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_log_value(item) for item in value]
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -213,10 +239,7 @@ class StructuredJsonFormatter(logging.Formatter):
         for key, value in record.__dict__.items():
             if key not in _RESERVED_LOG_RECORD_ATTRS and not key.startswith("_"):
                 if key not in log_data:
-                    if isinstance(value, str):
-                        log_data[key] = sanitize_log_message(value)
-                    else:
-                        log_data[key] = value
+                    log_data[key] = _sanitize_log_value(value)
 
         # Exception stack trace (sanitized)
         if record.exc_info:

@@ -17,6 +17,12 @@ from app.core.auth import (
     verify_password,
 )
 from app.core.logging import set_org_id, set_user_id
+from app.core.rate_limit import (
+    _raise_429,
+    check_fixed_window_rate_limit,
+    rate_limit_auth,
+)
+from app.config import settings
 from app.db.session import get_db
 from app.models.membership import Membership, MembershipRole
 from app.models.organization import Organization
@@ -27,6 +33,7 @@ from app.schemas.auth import (
     RegisterResponse,
     TokenResponse,
 )
+from app.services import audit_service
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +44,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
     "/register",
     response_model=RegisterResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit_auth)],
     summary="Register a new user and organization",
 )
 def register(
@@ -73,6 +81,16 @@ def register(
         role=MembershipRole.OWNER.value,
     )
     db.add(membership)
+    audit_service.record_audit_event(
+        db,
+        organization_id=org.id,
+        user_id=user.id,
+        action="auth.register",
+        resource_type="organization",
+        resource_id=str(org.id),
+        details={"email": user.email, "organization_name": org.name},
+        ip_address=request.client.host if request and request.client else None,
+    )
 
     try:
         db.commit()
@@ -105,6 +123,7 @@ def register(
 @router.post(
     "/login",
     response_model=TokenResponse,
+    dependencies=[Depends(rate_limit_auth)],
     summary="Authenticate and receive a JWT",
 )
 def login(
@@ -115,10 +134,25 @@ def login(
     """
     Verify credentials and return a signed HS256 JWT (1-hour expiry).
 
-    Returns HTTP 401 for invalid email or incorrect password.
-    Uses a constant-time comparison (Argon2id verify) to prevent timing attacks.
+    Enforces both IP-level and normalized-email brute-force rate limits,
+    uses constant-time Argon2id verification to prevent user enumeration, and
+    records login success/failure in AuditLog.
     """
-    user = db.scalar(select(User).where(User.email == payload.email.strip().lower()))
+    normalized_email = payload.email.strip().lower()
+    email_allowed, _, retry_after = check_fixed_window_rate_limit(
+        scope="auth_email",
+        identifier=normalized_email,
+        limit=settings.rate_limit_auth_max_requests,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    if not email_allowed:
+        _raise_429(
+            detail="Too many authentication attempts for this account. Please retry later.",
+            retry_after=retry_after,
+            limit=settings.rate_limit_auth_max_requests,
+        )
+
+    user = db.scalar(select(User).where(User.email == normalized_email))
 
     # Always run verify_password to prevent user-enumeration via timing.
     _dummy_hash = "$argon2id$v=19$m=65536,t=3,p=4$dummysaltvalue$dummyhashvalue"
@@ -128,6 +162,17 @@ def login(
     )
 
     if user is None or not password_ok:
+        audit_service.record_audit_event(
+            db,
+            organization_id=None,
+            user_id=user.id if user is not None else None,
+            action="auth.login_failed",
+            resource_type="user",
+            resource_id=str(user.id) if user is not None else None,
+            details={"email": normalized_email},
+            ip_address=request.client.host if request and request.client else None,
+            commit=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email address or password.",
@@ -135,6 +180,17 @@ def login(
         )
 
     token = create_access_token(user.id)
+    audit_service.record_audit_event(
+        db,
+        organization_id=None,
+        user_id=user.id,
+        action="auth.login",
+        resource_type="user",
+        resource_id=str(user.id),
+        details={"email": user.email},
+        ip_address=request.client.host if request and request.client else None,
+        commit=True,
+    )
     if request is not None:
         request.state.user_id = str(user.id)
     set_user_id(str(user.id))

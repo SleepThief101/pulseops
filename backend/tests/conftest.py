@@ -95,6 +95,18 @@ def db_session(test_engine) -> Generator[Session, None, None]:
         connection.close()
 
 
+@pytest.fixture(autouse=True)
+def default_test_rate_limits(monkeypatch):
+    """
+    Keep Redis rate limiting enabled with high thresholds during unrelated unit tests
+    so shared TestClient IP fixtures do not hit 429s; rate-limit tests override
+    these thresholds explicitly via monkeypatch.
+    """
+    monkeypatch.setattr(settings, "rate_limit_auth_max_requests", 10000)
+    monkeypatch.setattr(settings, "rate_limit_copilot_max_requests", 10000)
+    monkeypatch.setattr(settings, "rate_limit_org_write_max_requests", 10000)
+
+
 @pytest.fixture
 def test_encryption_key() -> str:
     """Generate a clean URL-safe base64 Fernet key for testing."""

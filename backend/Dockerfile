@@ -7,10 +7,12 @@ ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt .
 
-RUN python -m pip install --no-cache-dir --timeout=180 --retries=10 -v -r requirements.txt
+RUN python -m pip install --no-cache-dir --timeout=180 --retries=10 -r requirements.txt
 
+COPY alembic.ini .
+COPY alembic ./alembic
 COPY app ./app
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips=*"]

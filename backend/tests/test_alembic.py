@@ -23,5 +23,17 @@ def test_test_database_tables_exist_via_inspector(test_engine):
     inspector = inspect(test_engine)
     table_names = set(inspector.get_table_names())
 
-    expected = {"organizations", "users", "memberships", "integrations", "alembic_version"}
+    expected = {
+        "organizations",
+        "users",
+        "memberships",
+        "integrations",
+        "events",
+        "sync_runs",
+        "action_proposals",
+        "audit_logs",
+        "api_keys",
+        "webhook_deliveries",
+        "alembic_version",
+    }
     assert expected.issubset(table_names)

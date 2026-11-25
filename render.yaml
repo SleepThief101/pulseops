@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: pulseops-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips=*
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: ENABLE_DOCS
+        value: "false"
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: INTEGRATION_ENCRYPTION_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+
+  # Optional Render Background Worker (ARQ + Upstash Redis)
+  # Note: Render background workers require a paid plan (Starter or higher) and are
+  # disabled by default per free-tier cost controls. Synchronous POST /sync remains
+  # active on pulseops-api without a worker service. Uncomment when ready to enable:
+  #
+  # - type: worker
+  #   name: pulseops-worker
+  #   runtime: python
+  #   plan: starter
+  #   rootDir: backend
+  #   buildCommand: pip install -r requirements.txt
+  #   startCommand: arq app.worker.WorkerSettings
+  #   envVars:
+  #     - key: PYTHON_VERSION
+  #       value: 3.12.8
+  #     - key: ENVIRONMENT
+  #       value: production
+  #     - key: DATABASE_URL
+  #       sync: false
+  #     - key: REDIS_URL
+  #       sync: false
+  #     - key: INTEGRATION_ENCRYPTION_KEY
+  #       sync: false

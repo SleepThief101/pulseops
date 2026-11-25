@@ -7,16 +7,18 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.auth import get_current_membership, require_role
+from app.core.rate_limit import rate_limit_org_write
 from app.db.session import get_db
 from app.models.membership import Membership, MembershipRole
 from app.models.user import User
 from app.schemas.member import AddMemberRequest, MemberResponse
+from app.services import audit_service
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,9 @@ router = APIRouter(prefix="/orgs", tags=["Organization Members"])
 def add_member(
     org_id: uuid.UUID,
     payload: AddMemberRequest,
+    request: Request,
     current_membership: Membership = Depends(require_role(MembershipRole.OWNER)),
+    _: Membership = Depends(rate_limit_org_write),
     db: Session = Depends(get_db),
 ) -> MemberResponse:
     """
@@ -75,6 +79,16 @@ def add_member(
         role=payload.role,
     )
     db.add(new_membership)
+    audit_service.record_audit_event(
+        db,
+        organization_id=org_id,
+        user_id=current_membership.user_id,
+        action="member.added",
+        resource_type="membership",
+        resource_id=str(target_user.id),
+        details={"target_email": target_user.email, "role": payload.role},
+        ip_address=request.client.host if request and request.client else None,
+    )
     try:
         db.commit()
     except IntegrityError:

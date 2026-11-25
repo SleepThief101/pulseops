@@ -125,7 +125,12 @@ def decode_access_token(token: str) -> uuid.UUID:
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(
+            token,
+            get_jwt_secret(),
+            algorithms=[JWT_ALGORITHM],
+            options={"require": ["sub", "exp", "iat"]},
+        )
         sub: str | None = payload.get("sub")
         if not sub:
             raise credentials_exception

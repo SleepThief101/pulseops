@@ -4,7 +4,7 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 
-from app.config import settings
+from app.config import normalize_database_url, settings
 from app.db.base import Base
 import app.models  # noqa: F401 - Register all models with Base.metadata
 
@@ -26,7 +26,7 @@ def get_url() -> str:
     If running outside the Docker Compose network and the 'db' service hostname
     is unresolvable, dynamically adapt to localhost/127.0.0.1.
     """
-    url = settings.database_url
+    url = normalize_database_url(settings.database_url)
     if "@db:" in url:
         try:
             socket.gethostbyname("db")

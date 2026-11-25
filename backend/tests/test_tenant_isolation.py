@@ -540,12 +540,17 @@ class TestTenantResourceAndIntegrationIsolation:
         self, two_tenants: TwoTenantFixture
     ):
         """
-        Documents and verifies that hypothetical integration routes (e.g. /orgs/{org_id}/integrations)
-        are not exposed, returning standard 404 without data leakage.
+        Verify cross-tenant access to /integrations and unimplemented subroutes
+        returns standard 404 without data leakage.
         """
-        resp = two_tenants.client.get(
+        cross_resp = two_tenants.client.get(
             f"/orgs/{two_tenants.org_a.id}/integrations",
+            headers=two_tenants.headers(two_tenants.tenant_b.owner_token),
+        )
+        assert cross_resp.status_code == 404
+
+        missing_resp = two_tenants.client.get(
+            f"/orgs/{two_tenants.org_a.id}/nonexistent_resource",
             headers=two_tenants.headers(two_tenants.tenant_a.owner_token),
         )
-        # Endpoint is not implemented yet; returns 404 cleanly
-        assert resp.status_code == 404
+        assert missing_resp.status_code == 404
