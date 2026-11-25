@@ -738,13 +738,16 @@ class TestInboundWebhooks:
         assert ok1.status_code == 200
         assert ok1.json()["inserted_count"] == 1
 
-        # Webhook update reflects immediately in metrics summary
+        # Webhook update reflects immediately in metrics summary (one-time payment.captured -> volume, not MRR)
         metrics = int_env.client.get(
             f"/orgs/{org.id}/metrics/summary?days=30",
             headers={"Authorization": f"Bearer {owner_tok}"},
         )
         assert metrics.status_code == 200
-        assert metrics.json()["mrr_cents"] == 9900
+        m_json = metrics.json()
+        assert m_json["gross_revenue_cents"] == 9900
+        assert m_json["by_currency"]["USD"]["one_time_payment_volume_minor"] == 9900
+        assert m_json["mrr_cents"] == 0
 
         # Replay -> idempotent skip
         ok2 = int_env.client.post(

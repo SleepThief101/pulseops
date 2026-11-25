@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
-import uuid
 
 from app.core.auth import get_current_membership
 from app.db.session import get_db
@@ -21,11 +22,12 @@ router = APIRouter(prefix="/orgs", tags=["Metrics, Events & Sync Runs"])
 @router.get(
     "/{org_id}/metrics/summary",
     response_model=MetricsSummaryResponse,
-    summary="Get aggregated MRR, churn, PR, and issue metrics",
+    summary="Get aggregated multi-currency SaaS KPIs and engineering metrics",
 )
 def get_metrics_summary(
     org_id: uuid.UUID,
     days: int = Query(default=30, ge=1, le=365),
+    include_synthetic: bool = Query(default=False),
     _: Membership = Depends(get_current_membership),
     db: Session = Depends(get_db),
 ) -> MetricsSummaryResponse:
@@ -34,6 +36,7 @@ def get_metrics_summary(
         db,
         organization_id=org_id,
         window_days=days,
+        include_synthetic=include_synthetic,
     )
 
 
@@ -45,6 +48,7 @@ def get_metrics_summary(
 def get_metrics_timeseries(
     org_id: uuid.UUID,
     days: int = Query(default=30, ge=1, le=365),
+    include_synthetic: bool = Query(default=False),
     _: Membership = Depends(get_current_membership),
     db: Session = Depends(get_db),
 ) -> MetricsTimeseriesResponse:
@@ -53,6 +57,7 @@ def get_metrics_timeseries(
         db,
         organization_id=org_id,
         window_days=days,
+        include_synthetic=include_synthetic,
     )
 
 
@@ -65,6 +70,8 @@ def list_org_events(
     org_id: uuid.UUID,
     source: str | None = Query(default=None),
     event_type: str | None = Query(default=None),
+    currency: str | None = Query(default=None),
+    include_synthetic: bool = Query(default=True),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     _: Membership = Depends(get_current_membership),
@@ -76,6 +83,8 @@ def list_org_events(
         organization_id=org_id,
         source=source,
         event_type=event_type,
+        currency=currency,
+        include_synthetic=include_synthetic,
         limit=limit,
         offset=offset,
     )

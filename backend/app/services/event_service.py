@@ -7,11 +7,12 @@ import io
 from typing import Any
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.connectors import ConnectorRegistry, connector_registry
+from app.core.currency import format_minor_amount, minor_to_major_decimal
 from app.core.monitoring import EVENTS_INGESTED_TOTAL
 from app.core.rate_limit import get_redis_client
 from app.models.event import Event
@@ -63,9 +64,16 @@ def ingest_events(
             "external_id": evt.external_id,
             "event_type": evt.event_type,
             "occurred_at": evt.occurred_at,
-            "amount_cents": evt.amount_cents,
+            "amount_cents": evt.amount_minor,
+            "minor_unit_exponent": evt.minor_unit_exponent,
             "currency": evt.currency,
             "actor": evt.actor,
+            "is_synthetic": bool(
+                evt.is_synthetic
+                or evt.source == "fake"
+                or evt.payload.get("synthetic") is True
+                or evt.payload.get("billing_mode") == "mock_fallback"
+            ),
             "payload": evt.payload,
         }
         for evt in events
@@ -127,26 +135,92 @@ def sync_connector_events(
     )
 
 
+def _apply_event_filters(
+    stmt: Any,
+    *,
+    organization_id: uuid.UUID,
+    source: str | None = None,
+    event_type: str | None = None,
+    actor: str | None = None,
+    currency: str | None = None,
+    include_synthetic: bool = True,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> Any:
+    stmt = stmt.where(Event.organization_id == organization_id)
+    if source is not None:
+        stmt = stmt.where(Event.source == source)
+    if event_type is not None:
+        stmt = stmt.where(Event.event_type == event_type)
+    if actor is not None:
+        stmt = stmt.where(Event.actor == actor)
+    if currency is not None:
+        stmt = stmt.where(Event.currency == currency.strip().upper())
+    if not include_synthetic:
+        stmt = stmt.where(Event.is_synthetic.is_(False))
+    if since is not None:
+        stmt = stmt.where(Event.occurred_at >= since)
+    if until is not None:
+        stmt = stmt.where(Event.occurred_at <= until)
+    return stmt
+
+
 def list_events(
     db: Session,
     *,
     organization_id: uuid.UUID,
     source: str | None = None,
     event_type: str | None = None,
+    actor: str | None = None,
+    currency: str | None = None,
+    include_synthetic: bool = True,
+    since: datetime | None = None,
+    until: datetime | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[Event]:
     """List events strictly scoped to ``organization_id`` ordered newest first."""
-    stmt = select(Event).where(Event.organization_id == organization_id)
-
-    if source is not None:
-        stmt = stmt.where(Event.source == source)
-    if event_type is not None:
-        stmt = stmt.where(Event.event_type == event_type)
-
+    stmt = _apply_event_filters(
+        select(Event),
+        organization_id=organization_id,
+        source=source,
+        event_type=event_type,
+        actor=actor,
+        currency=currency,
+        include_synthetic=include_synthetic,
+        since=since,
+        until=until,
+    )
     stmt = stmt.order_by(Event.occurred_at.desc(), Event.created_at.desc())
     stmt = stmt.limit(limit).offset(offset)
     return list(db.scalars(stmt).all())
+
+
+def count_events(
+    db: Session,
+    *,
+    organization_id: uuid.UUID,
+    source: str | None = None,
+    event_type: str | None = None,
+    actor: str | None = None,
+    currency: str | None = None,
+    include_synthetic: bool = True,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> int:
+    """Count matching tenant-scoped events for accurate truncation reporting."""
+    stmt = _apply_event_filters(
+        select(func.count(Event.id)),
+        organization_id=organization_id,
+        source=source,
+        event_type=event_type,
+        actor=actor,
+        currency=currency,
+        include_synthetic=include_synthetic,
+        since=since,
+        until=until,
+    )
+    return int(db.scalar(stmt) or 0)
 
 
 def get_event_by_id(
@@ -185,7 +259,7 @@ def export_events_csv(
 ) -> str:
     """
     Export tenant-scoped operational events to RFC 4180 CSV format with
-    formula-injection sanitization.
+    formula-injection sanitization and explicit minor/major monetary precision.
     """
     since = datetime.now(timezone.utc) - timedelta(days=days)
     stmt = (
@@ -214,12 +288,37 @@ def export_events_csv(
             "external_id",
             "event_type",
             "occurred_at",
+            "amount_minor",
             "amount_cents",
+            "minor_unit_exponent",
+            "amount_major",
+            "formatted_amount",
             "currency",
             "actor",
+            "is_synthetic",
         ]
     )
     for evt in rows:
+        amt_major = ""
+        amt_formatted = ""
+        if evt.amount_cents is not None:
+            amt_formatted = format_minor_amount(
+                evt.amount_cents,
+                evt.currency,
+                exponent=evt.minor_unit_exponent,
+            )
+            if evt.currency:
+                try:
+                    amt_major = str(
+                        minor_to_major_decimal(
+                            evt.amount_cents,
+                            evt.currency,
+                            exponent=evt.minor_unit_exponent,
+                        )
+                    )
+                except ValueError:
+                    amt_major = ""
+
         writer.writerow(
             [
                 str(evt.id),
@@ -229,8 +328,13 @@ def export_events_csv(
                 _sanitize_csv_cell(evt.event_type),
                 evt.occurred_at.isoformat(),
                 "" if evt.amount_cents is None else str(evt.amount_cents),
+                "" if evt.amount_cents is None else str(evt.amount_cents),
+                "" if evt.minor_unit_exponent is None else str(evt.minor_unit_exponent),
+                _sanitize_csv_cell(amt_major),
+                _sanitize_csv_cell(amt_formatted),
                 _sanitize_csv_cell(evt.currency),
                 _sanitize_csv_cell(evt.actor),
+                "true" if evt.is_synthetic else "false",
             ]
         )
     return buf.getvalue()

@@ -28,14 +28,53 @@ export interface RegisterResponse {
   role: Role;
 }
 
+export interface CurrencyMetricsSummary {
+  currency: string;
+  minor_unit_exponent: number | null;
+  minor_unit_name: string;
+  recurring_mrr_minor: number;
+  recurring_arr_minor: number;
+  subscription_revenue_minor: number;
+  one_time_payment_volume_minor: number;
+  gross_volume_minor: number;
+  refunded_minor: number;
+  net_revenue_minor: number;
+  churned_mrr_minor: number;
+  failed_payments_count: number;
+  failed_payments_minor: number;
+  active_subscribers_count: number;
+  churned_subscriptions_count: number;
+  formatted_recurring_mrr: string;
+  formatted_recurring_arr: string;
+  formatted_subscription_revenue: string;
+  formatted_one_time_volume: string;
+  formatted_gross_volume: string;
+  formatted_refunded: string;
+  formatted_net_revenue: string;
+  formatted_churned_mrr: string;
+  formatted_failed_payments: string;
+  mrr_reliable: boolean;
+  mrr_note: string | null;
+}
+
 export interface MetricsSummary {
   organization_id: string;
   window_days: number;
-  gross_revenue_cents: number;
-  refunded_cents: number;
-  churned_mrr_cents: number;
-  mrr_cents: number;
-  arr_cents: number;
+  currencies: string[];
+  primary_currency: string | null;
+  multi_currency: boolean;
+  by_currency: Record<string, CurrencyMetricsSummary>;
+  contains_synthetic_data: boolean;
+  synthetic_events_in_window: number;
+  synthetic_events_excluded: boolean;
+  include_synthetic: boolean;
+  fx_conversion_applied: boolean;
+  methodology_notes: string[];
+  gross_revenue_cents: number | null;
+  refunded_cents: number | null;
+  churned_mrr_cents: number | null;
+  mrr_cents: number | null;
+  arr_cents: number | null;
   active_subscribers_count: number;
   churned_subscriptions_count: number;
   churn_rate_pct: number;
@@ -48,10 +87,21 @@ export interface MetricsSummary {
   total_events_in_window: number;
 }
 
+export interface CurrencyTimeseriesPoint {
+  currency: string;
+  subscription_revenue_minor: number;
+  one_time_volume_minor: number;
+  gross_volume_minor: number;
+  refunded_minor: number;
+  churned_mrr_minor: number;
+  failed_payments_minor: number;
+}
+
 export interface MetricsTimeseriesPoint {
   date: string;
-  revenue_cents: number;
-  churn_cents: number;
+  revenue_cents: number | null;
+  churn_cents: number | null;
+  by_currency: Record<string, CurrencyTimeseriesPoint>;
   prs_opened: number;
   prs_merged: number;
   issues_opened: number;
@@ -61,6 +111,13 @@ export interface MetricsTimeseriesPoint {
 export interface MetricsTimeseries {
   organization_id: string;
   window_days: number;
+  currencies: string[];
+  primary_currency: string | null;
+  multi_currency: boolean;
+  contains_synthetic_data: boolean;
+  synthetic_events_in_window: number;
+  synthetic_events_excluded: boolean;
+  include_synthetic: boolean;
   points: MetricsTimeseriesPoint[];
 }
 
@@ -105,9 +162,15 @@ export interface EventItem {
   external_id: string;
   event_type: string;
   occurred_at: string;
+  amount_minor: number | null;
   amount_cents: number | null;
+  minor_unit_exponent: number | null;
+  minor_unit_name: string | null;
+  amount_major: string | null;
+  formatted_amount: string | null;
   currency: string | null;
   actor: string | null;
+  is_synthetic: boolean;
   payload: Record<string, unknown>;
   created_at: string;
 }

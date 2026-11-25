@@ -109,9 +109,10 @@ def pulseops_list_my_organizations(api_key: str | None = None) -> dict[str, Any]
 def pulseops_metrics_summary(
     organization_id: str,
     days: int = 30,
+    include_synthetic: bool = False,
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    """Read aggregated MRR, churn, GitHub PRs, open issues, and cycle time for an authorized org."""
+    """Read multi-currency MRR, churn, GitHub PRs, open issues, and cycle time for an authorized org."""
     with _session_factory() as db:
         org_uuid, membership = _authorize_org_tool(
             db,
@@ -125,7 +126,7 @@ def pulseops_metrics_summary(
             tool=tool,
             organization_id=org_uuid,
             caller_role=membership.role,
-            raw_args={"days": days},
+            raw_args={"days": days, "include_synthetic": include_synthetic},
             allow_mutating_execution=False,
         )
 
@@ -135,10 +136,15 @@ def pulseops_recent_events(
     organization_id: str,
     source: str | None = None,
     event_type: str | None = None,
+    actor: str | None = None,
+    currency: str | None = None,
+    include_synthetic: bool = True,
+    since_days: int | None = None,
     limit: int = 20,
+    offset: int = 0,
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    """List recent normalized operational events for an authorized organization."""
+    """List recent normalized operational events with currency precision and correlation metadata."""
     with _session_factory() as db:
         org_uuid, membership = _authorize_org_tool(
             db,
@@ -147,11 +153,21 @@ def pulseops_recent_events(
             tool_name="list_recent_events",
         )
         tool = ai_tool_registry.get("list_recent_events")
-        raw_args: dict[str, Any] = {"limit": limit}
+        raw_args: dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+            "include_synthetic": include_synthetic,
+        }
         if source is not None:
             raw_args["source"] = source
         if event_type is not None:
             raw_args["event_type"] = event_type
+        if actor is not None:
+            raw_args["actor"] = actor
+        if currency is not None:
+            raw_args["currency"] = currency
+        if since_days is not None:
+            raw_args["since_days"] = since_days
         return execute_tool_safely(
             db,
             tool=tool,

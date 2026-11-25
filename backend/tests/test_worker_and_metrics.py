@@ -453,8 +453,12 @@ class TestMetricsEngineAndEndpoints:
         assert s["gross_revenue_cents"] == 30000
         assert s["refunded_cents"] == 2000
         assert s["churned_mrr_cents"] == 5000
-        assert s["mrr_cents"] == 23000
-        assert s["arr_cents"] == 23000 * 12
+        # cust_1 (10000 - 2000 refund = 8000) + cust_2 (20000) = 28000; cust_3 wasn't active in window
+        assert s["mrr_cents"] == 28000
+        assert s["arr_cents"] == 28000 * 12
+        assert s["by_currency"]["USD"]["recurring_mrr_minor"] == 28000
+        assert s["by_currency"]["USD"]["subscription_revenue_minor"] == 30000
+        assert s["by_currency"]["USD"]["one_time_payment_volume_minor"] == 0
         assert s["active_subscribers_count"] == 2
         assert s["churned_subscriptions_count"] == 1
         assert s["churn_rate_pct"] == 33.33

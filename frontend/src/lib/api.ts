@@ -204,9 +204,16 @@ export const apiClient = {
     return request<UserOrganization[]>("/me/organizations", {}, token, onUnauthorized);
   },
 
-  getMetricsSummary(orgId: string, days: number, token: string, onUnauthorized?: () => void) {
+  getMetricsSummary(
+    orgId: string,
+    days: number,
+    token: string,
+    onUnauthorized?: () => void,
+    includeSynthetic = false
+  ) {
+    const suffix = includeSynthetic ? "&include_synthetic=true" : "";
     return request<MetricsSummary>(
-      `/orgs/${orgId}/metrics/summary?days=${days}`,
+      `/orgs/${orgId}/metrics/summary?days=${days}${suffix}`,
       {},
       token,
       onUnauthorized
@@ -217,10 +224,12 @@ export const apiClient = {
     orgId: string,
     days: number,
     token: string,
-    onUnauthorized?: () => void
+    onUnauthorized?: () => void,
+    includeSynthetic = false
   ) {
+    const suffix = includeSynthetic ? "&include_synthetic=true" : "";
     return request<MetricsTimeseries>(
-      `/orgs/${orgId}/metrics/timeseries?days=${days}`,
+      `/orgs/${orgId}/metrics/timeseries?days=${days}${suffix}`,
       {},
       token,
       onUnauthorized

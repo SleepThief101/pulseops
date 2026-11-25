@@ -8,7 +8,7 @@ import { formatDateTime } from "../lib/format";
 import type { IntegrationItem, SyncRunItem } from "../types/api";
 
 const SAMPLE_CSV = [
-  "event_type,occurred_at,amount_cents,currency,actor,plan",
+  "event_type,occurred_at,amount_minor,currency,actor,plan",
   `subscription.charged,${new Date().toISOString()},14900,USD,cust_csv_01,scale`,
   `issue.closed,${new Date().toISOString()},,,alice,`,
 ].join("\n");
@@ -586,7 +586,7 @@ export function IntegrationsPage() {
                       </div>
                       <div className="form-hint">
                         Required: <code>event_type</code>, <code>occurred_at</code> · Optional:{" "}
-                        <code>amount_cents</code>, <code>currency</code>, <code>actor</code>
+                        <code>amount_minor</code> (or <code>amount_major</code>), <code>currency</code>, <code>actor</code>
                       </div>
                     </div>
                   </div>

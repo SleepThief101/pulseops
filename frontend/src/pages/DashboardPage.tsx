@@ -16,8 +16,15 @@ import { KpiCard } from "../components/KpiCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAuth } from "../context/AuthContext";
 import { ApiError, apiClient } from "../lib/api";
-import { formatCurrencyCents, formatDateTime, formatShortDate } from "../lib/format";
+import {
+  formatDateTime,
+  formatMoneyMinor,
+  formatShortDate,
+  getMinorUnitExponent,
+  minorToMajorNumber,
+} from "../lib/format";
 import type {
+  CurrencyMetricsSummary,
   IntegrationItem,
   MetricsSummary,
   MetricsTimeseriesPoint,
@@ -29,15 +36,29 @@ interface DashboardPageProps {
   onDrilldownEvents: (source: string) => void;
 }
 
-function formatCompactDollarAxis(value: number): string {
-  if (value === 0) return "$0";
+const DEMO_ORG_NAME = "PulseOps Synthetic Demo";
+
+function formatCompactMoneyAxis(value: number, currency: string | null): string {
+  const sym =
+    currency === "INR"
+      ? "₹"
+      : currency === "EUR"
+        ? "€"
+        : currency === "GBP"
+          ? "£"
+          : currency === "JPY"
+            ? "¥"
+            : currency === "USD" || !currency
+              ? "$"
+              : `${currency} `;
+  if (value === 0) return `${sym}0`;
   if (Math.abs(value) >= 1_000_000) {
-    return `$${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+    return `${sym}${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
   }
   if (Math.abs(value) >= 1000) {
-    return `$${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+    return `${sym}${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`;
   }
-  return `$${value}`;
+  return `${sym}${value}`;
 }
 
 interface TooltipPayloadEntry {
@@ -51,29 +72,35 @@ function CustomRevenueTooltip({
   active,
   payload,
   label,
+  currency,
 }: {
   active?: boolean;
   payload?: TooltipPayloadEntry[];
   label?: string;
+  currency: string | null;
 }) {
   if (!active || !payload || payload.length === 0) return null;
+  const exp = getMinorUnitExponent(currency);
   return (
     <div className="chart-tooltip">
       <div className="chart-tooltip-date">{label}</div>
-      {payload.map((entry) => (
-        <div key={entry.dataKey || entry.name} className="chart-tooltip-row">
-          <span className="legend-item">
-            <span
-              className="status-dot"
-              style={{ background: entry.color || "var(--accent)" }}
-            />
-            {entry.name}
-          </span>
-          <span className="tabular" style={{ fontWeight: 600 }}>
-            {formatCurrencyCents(Math.round(Number(entry.value || 0) * 100))}
-          </span>
-        </div>
-      ))}
+      {payload.map((entry) => {
+        const minor = Math.round(Number(entry.value || 0) * 10 ** exp);
+        return (
+          <div key={entry.dataKey || entry.name} className="chart-tooltip-row">
+            <span className="legend-item">
+              <span
+                className="status-dot"
+                style={{ background: entry.color || "var(--accent)" }}
+              />
+              {entry.name}
+            </span>
+            <span className="tabular" style={{ fontWeight: 600 }}>
+              {formatMoneyMinor(minor, currency, exp)}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -115,6 +142,9 @@ export function DashboardPage({
   onDrilldownEvents,
 }: DashboardPageProps) {
   const { token, activeOrg, logout } = useAuth();
+  const isDemoWorkspace = activeOrg?.organization_name === DEMO_ORG_NAME;
+  const [includeSynthetic, setIncludeSynthetic] = useState<boolean>(isDemoWorkspace);
+  const [selectedCurrency, setSelectedCurrency] = useState<string>("");
   const [summary, setSummary] = useState<MetricsSummary | null>(null);
   const [points, setPoints] = useState<MetricsTimeseriesPoint[]>([]);
   const [integrations, setIntegrations] = useState<IntegrationItem[]>([]);
@@ -123,14 +153,31 @@ export function DashboardPage({
   const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
+    setIncludeSynthetic(activeOrg?.organization_name === DEMO_ORG_NAME);
+    setSelectedCurrency("");
+  }, [activeOrg?.organization_id, activeOrg?.organization_name]);
+
+  useEffect(() => {
     if (!token || !activeOrg) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
 
     Promise.all([
-      apiClient.getMetricsSummary(activeOrg.organization_id, windowDays, token, logout),
-      apiClient.getMetricsTimeseries(activeOrg.organization_id, windowDays, token, logout),
+      apiClient.getMetricsSummary(
+        activeOrg.organization_id,
+        windowDays,
+        token,
+        logout,
+        includeSynthetic
+      ),
+      apiClient.getMetricsTimeseries(
+        activeOrg.organization_id,
+        windowDays,
+        token,
+        logout,
+        includeSynthetic
+      ),
       apiClient
         .listIntegrations(activeOrg.organization_id, token, logout)
         .catch(() => [] as IntegrationItem[]),
@@ -140,6 +187,13 @@ export function DashboardPage({
         setSummary(sumRes);
         setPoints(tsRes.points);
         setIntegrations(intsRes);
+        if (sumRes.currencies.length > 0) {
+          setSelectedCurrency((prev) =>
+            prev && sumRes.currencies.includes(prev) ? prev : sumRes.currencies[0]
+          );
+        } else {
+          setSelectedCurrency("");
+        }
       })
       .catch((err) => {
         if (cancelled) return;
@@ -152,7 +206,7 @@ export function DashboardPage({
     return () => {
       cancelled = true;
     };
-  }, [token, activeOrg, windowDays, reloadTick, logout]);
+  }, [token, activeOrg, windowDays, includeSynthetic, reloadTick, logout]);
 
   if (!activeOrg) {
     return (
@@ -205,15 +259,30 @@ export function DashboardPage({
 
   if (!summary) return null;
 
-  const chartData = points.map((p) => ({
-    ...p,
-    label: formatShortDate(p.date),
-    revenueDollars: Number((p.revenue_cents / 100).toFixed(2)),
-    churnDollars: Number((p.churn_cents / 100).toFixed(2)),
-  }));
+  const activeCurrencyCode =
+    (selectedCurrency && summary.by_currency[selectedCurrency]
+      ? selectedCurrency
+      : summary.currencies[0]) || null;
+  const activeCurrencySummary: CurrencyMetricsSummary | null = activeCurrencyCode
+    ? summary.by_currency[activeCurrencyCode] ?? null
+    : null;
+
+  const activeExp = activeCurrencySummary?.minor_unit_exponent ?? getMinorUnitExponent(activeCurrencyCode);
+
+  const chartData = points.map((p) => {
+    const currPt = activeCurrencyCode ? p.by_currency?.[activeCurrencyCode] : undefined;
+    const revMinor = currPt ? currPt.gross_volume_minor : 0;
+    const churnMinor = currPt ? currPt.refunded_minor + currPt.churned_mrr_minor : 0;
+    return {
+      ...p,
+      label: formatShortDate(p.date),
+      revenueMajor: minorToMajorNumber(revMinor, activeCurrencyCode, activeExp),
+      churnMajor: minorToMajorNumber(churnMinor, activeCurrencyCode, activeExp),
+    };
+  });
 
   const hasRevenueActivity = chartData.some(
-    (p) => p.revenueDollars > 0 || p.churnDollars > 0
+    (p) => p.revenueMajor > 0 || p.churnMajor > 0
   );
   const hasEngActivity = chartData.some(
     (p) => p.prs_merged > 0 || p.issues_opened > 0 || p.issues_closed > 0
@@ -228,6 +297,119 @@ export function DashboardPage({
 
   return (
     <>
+      {/* Provenance & Multi-Currency Banner */}
+      {(summary.contains_synthetic_data ||
+        summary.synthetic_events_excluded ||
+        summary.multi_currency) && (
+        <div
+          className="panel panel-pad"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 14,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {summary.contains_synthetic_data && (
+              <StatusBadge tone="warn" dot>
+                Synthetic / Demo Data ({summary.synthetic_events_in_window} events)
+              </StatusBadge>
+            )}
+            {summary.synthetic_events_excluded && (
+              <StatusBadge tone="info" dot>
+                Live Metrics Only ({summary.synthetic_events_in_window} synthetic excluded)
+              </StatusBadge>
+            )}
+            {summary.multi_currency && (
+              <StatusBadge tone="action">
+                Multi-Currency ({summary.currencies.join(" · ")}) — No FX mixing
+              </StatusBadge>
+            )}
+          </div>
+
+          <div className="row-actions">
+            {summary.currencies.length > 1 && (
+              <div className="segmented" role="group" aria-label="Select Currency">
+                {summary.currencies.map((curr) => (
+                  <button
+                    key={curr}
+                    type="button"
+                    aria-pressed={activeCurrencyCode === curr}
+                    className={`segmented-btn ${activeCurrencyCode === curr ? "active" : ""}`}
+                    onClick={() => setSelectedCurrency(curr)}
+                  >
+                    {curr}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {summary.synthetic_events_in_window > 0 && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setIncludeSynthetic((prev) => !prev)}
+              >
+                {includeSynthetic ? "Show Live Only" : "Include Synthetic Data"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Per-currency snapshot cards when multiple currencies exist */}
+      {summary.multi_currency && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+            gap: 12,
+          }}
+          aria-label="Per-Currency Breakdown"
+        >
+          {summary.currencies.map((curr) => {
+            const csum = summary.by_currency[curr];
+            const isSelected = curr === activeCurrencyCode;
+            return (
+              <button
+                key={curr}
+                type="button"
+                className="panel panel-pad"
+                onClick={() => setSelectedCurrency(curr)}
+                style={{
+                  textAlign: "left",
+                  cursor: "pointer",
+                  borderColor: isSelected
+                    ? "var(--accent-action-border)"
+                    : "var(--border-subtle)",
+                  background: isSelected
+                    ? "var(--bg-surface-elevated)"
+                    : "var(--bg-surface)",
+                }}
+              >
+                <div className="row-actions" style={{ justifyContent: "space-between", marginBottom: 8 }}>
+                  <StatusBadge tone={isSelected ? "action" : "neutral"}>{curr}</StatusBadge>
+                  <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                    {csum.minor_unit_name} (10^{csum.minor_unit_exponent ?? "?"})
+                  </span>
+                </div>
+                <div className="tabular" style={{ fontSize: "1.15rem", fontWeight: 600 }}>
+                  {csum.formatted_gross_volume}{" "}
+                  <span style={{ fontSize: "0.8rem", fontWeight: 400, color: "var(--text-secondary)" }}>
+                    gross
+                  </span>
+                </div>
+                <div className="tabular" style={{ fontSize: "0.8125rem", color: "var(--text-muted)", marginTop: 4 }}>
+                  MRR {csum.formatted_recurring_mrr} · One-time {csum.formatted_one_time_volume}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {summary.total_events_in_window === 0 && (
         <div
           className="panel panel-pad"
@@ -241,10 +423,12 @@ export function DashboardPage({
         >
           <div>
             <div style={{ fontWeight: 600, fontSize: "1rem", marginBottom: 4 }}>
-              No operational events synced in the last {windowDays} days.
+              No {includeSynthetic ? "operational" : "live"} events synced in the last {windowDays} days.
             </div>
             <div className="page-desc" style={{ margin: 0 }}>
-              Connect Razorpay, GitHub, or upload a CSV to populate live metrics.
+              {summary.synthetic_events_excluded
+                ? `${summary.synthetic_events_in_window} synthetic/mock events exist — toggle "Include Synthetic Data" above or connect a live source.`
+                : "Connect Razorpay, GitHub, or upload a CSV to populate live metrics."}
             </div>
           </div>
           <button type="button" className="btn" onClick={onGoToIntegrations}>
@@ -256,20 +440,42 @@ export function DashboardPage({
       {/* Primary KPIs */}
       <section className="kpi-grid" aria-label="Key Metrics">
         <KpiCard
-          label={`Net MRR (${windowDays}d)`}
-          value={formatCurrencyCents(summary.mrr_cents)}
-          badgeText="Billing"
-          badgeTone="ok"
-          meta={`ARR ${formatCurrencyCents(summary.arr_cents)}`}
+          label={`Recurring MRR${activeCurrencyCode ? ` (${activeCurrencyCode})` : ""}`}
+          value={
+            activeCurrencySummary
+              ? activeCurrencySummary.formatted_recurring_mrr
+              : formatMoneyMinor(0, "USD")
+          }
+          badgeText={
+            activeCurrencySummary && !activeCurrencySummary.mrr_reliable
+              ? "No Recurring"
+              : "Recurring"
+          }
+          badgeTone={
+            activeCurrencySummary && !activeCurrencySummary.mrr_reliable ? "warn" : "ok"
+          }
+          meta={
+            activeCurrencySummary
+              ? `ARR ${activeCurrencySummary.formatted_recurring_arr}`
+              : "No active subscriptions"
+          }
           onClick={() => onDrilldownEvents("razorpay")}
         />
 
         <KpiCard
-          label="Churn Rate"
-          value={`${summary.churn_rate_pct}%`}
-          badgeText={`${summary.churned_subscriptions_count} churned`}
+          label={`Payment Volume (${windowDays}d${activeCurrencyCode ? ` · ${activeCurrencyCode}` : ""})`}
+          value={
+            activeCurrencySummary
+              ? activeCurrencySummary.formatted_gross_volume
+              : formatMoneyMinor(0, "USD")
+          }
+          badgeText={`${summary.churn_rate_pct}% churn`}
           badgeTone={churnBadgeTone}
-          meta={`${summary.active_subscribers_count} active subscribers`}
+          meta={
+            activeCurrencySummary
+              ? `1-time ${activeCurrencySummary.formatted_one_time_volume} · Sub ${activeCurrencySummary.formatted_subscription_revenue}`
+              : `${summary.active_subscribers_count} active subscribers`
+          }
           onClick={() => onDrilldownEvents("razorpay")}
         />
 
@@ -303,30 +509,48 @@ export function DashboardPage({
         />
       </section>
 
+      {activeCurrencySummary?.mrr_note && (
+        <div className="alert alert-warn" role="status">
+          <span>{activeCurrencySummary.mrr_note}</span>
+        </div>
+      )}
+
       {/* Secondary Financials & Operational Health Split */}
       <section className="ops-health-grid" aria-label="Window Financials and Health">
         <div className="telemetry-strip" aria-label="Window Financial Summary">
           <div className="telemetry-item">
-            <span className="telemetry-label">Gross Revenue</span>
+            <span className="telemetry-label">Net Revenue</span>
             <span className="telemetry-val">
-              {formatCurrencyCents(summary.gross_revenue_cents)}
+              {activeCurrencySummary
+                ? activeCurrencySummary.formatted_net_revenue
+                : formatMoneyMinor(0, "USD")}
             </span>
           </div>
           <div className="telemetry-item">
             <span className="telemetry-label">Refunds</span>
             <span className="telemetry-val">
-              {formatCurrencyCents(summary.refunded_cents)}
+              {activeCurrencySummary
+                ? activeCurrencySummary.formatted_refunded
+                : formatMoneyMinor(0, "USD")}
+            </span>
+          </div>
+          <div className="telemetry-item">
+            <span className="telemetry-label">
+              Failed ({activeCurrencySummary?.failed_payments_count ?? 0})
+            </span>
+            <span className="telemetry-val">
+              {activeCurrencySummary
+                ? activeCurrencySummary.formatted_failed_payments
+                : formatMoneyMinor(0, "USD")}
             </span>
           </div>
           <div className="telemetry-item">
             <span className="telemetry-label">Churned MRR</span>
             <span className="telemetry-val">
-              {formatCurrencyCents(summary.churned_mrr_cents)}
+              {activeCurrencySummary
+                ? activeCurrencySummary.formatted_churned_mrr
+                : formatMoneyMinor(0, "USD")}
             </span>
-          </div>
-          <div className="telemetry-item">
-            <span className="telemetry-label">Events ({windowDays}d)</span>
-            <span className="telemetry-val">{summary.total_events_in_window}</span>
           </div>
         </div>
 
@@ -380,10 +604,10 @@ export function DashboardPage({
       {/* Primary Operational Charts */}
       <section className="charts-grid" aria-label="Trend Charts">
         <ChartPanel
-          title="Revenue & Churn Trajectory"
-          subtitle={`Daily recognized billing vs refunds & churn (${windowDays}d)`}
+          title={`Revenue & Churn Trajectory${activeCurrencyCode ? ` (${activeCurrencyCode})` : ""}`}
+          subtitle={`Daily recognized billing vs refunds & churn (${windowDays}d UTC)`}
           legend={[
-            { label: "Revenue", color: "#10b981" },
+            { label: "Gross Volume", color: "#10b981" },
             { label: "Churn / Refunds", color: "#f43f5e" },
           ]}
           empty={!hasRevenueActivity}
@@ -394,7 +618,7 @@ export function DashboardPage({
             <ResponsiveContainer>
               <AreaChart
                 data={chartData}
-                margin={{ top: 10, right: 8, left: -4, bottom: 0 }}
+                margin={{ top: 10, right: 8, left: 0, bottom: 0 }}
               >
                 <defs>
                   <linearGradient id="pulseopsRevGrad" x1="0" y1="0" x2="0" y2="1">
@@ -426,14 +650,16 @@ export function DashboardPage({
                   axisLine={false}
                   fontSize={13}
                   tick={{ fill: "#a1a1aa" }}
-                  tickFormatter={formatCompactDollarAxis}
-                  width={56}
+                  tickFormatter={(val: number) =>
+                    formatCompactMoneyAxis(val, activeCurrencyCode)
+                  }
+                  width={68}
                 />
-                <Tooltip content={<CustomRevenueTooltip />} />
+                <Tooltip content={<CustomRevenueTooltip currency={activeCurrencyCode} />} />
                 <Area
                   type="monotone"
-                  dataKey="revenueDollars"
-                  name="Revenue"
+                  dataKey="revenueMajor"
+                  name="Gross Volume"
                   stroke="#10b981"
                   strokeWidth={2}
                   fill="url(#pulseopsRevGrad)"
@@ -441,7 +667,7 @@ export function DashboardPage({
                 />
                 <Area
                   type="monotone"
-                  dataKey="churnDollars"
+                  dataKey="churnMajor"
                   name="Churn / Refunds"
                   stroke="#f43f5e"
                   strokeWidth={1.75}
@@ -455,7 +681,7 @@ export function DashboardPage({
 
         <ChartPanel
           title="Engineering Delivery Velocity"
-          subtitle={`Merged pull requests vs issue flow (${windowDays}d)`}
+          subtitle={`Merged pull requests vs issue flow (${windowDays}d UTC)`}
           legend={[
             { label: "PRs Merged", color: "#0ea5e9" },
             { label: "Issues Opened", color: "#f59e0b" },

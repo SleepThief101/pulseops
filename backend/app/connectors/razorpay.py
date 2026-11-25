@@ -7,19 +7,26 @@ import httpx
 
 from app.config import settings
 from app.connectors.base import BaseConnector, ConnectorAuthError, ConnectorError
+from app.core.currency import (
+    InvalidCurrencyError,
+    get_minor_unit_exponent,
+    normalize_currency,
+)
 from app.schemas.event import NormalizedEvent
+
 
 def _mock_base_time() -> datetime:
     return datetime.now(timezone.utc).replace(
         hour=9, minute=0, second=0, microsecond=0
     ) - timedelta(days=4)
 
+
 _MOCK_RAZORPAY_EVENTS: list[dict[str, Any]] = [
     {
         "external_id": "rzp_mock_sub_001",
         "event_type": "subscription.charged",
         "offset_hours": 0,
-        "amount_cents": 9900,
+        "amount_minor": 9900,
         "currency": "USD",
         "actor": "cust_mock_alpha",
         "payload": {"plan_id": "plan_growth", "subscription_id": "sub_mock_001"},
@@ -28,7 +35,7 @@ _MOCK_RAZORPAY_EVENTS: list[dict[str, Any]] = [
         "external_id": "rzp_mock_sub_002",
         "event_type": "subscription.charged",
         "offset_hours": 12,
-        "amount_cents": 29900,
+        "amount_minor": 29900,
         "currency": "USD",
         "actor": "cust_mock_beta",
         "payload": {"plan_id": "plan_scale", "subscription_id": "sub_mock_002"},
@@ -37,7 +44,7 @@ _MOCK_RAZORPAY_EVENTS: list[dict[str, Any]] = [
         "external_id": "rzp_mock_pay_003",
         "event_type": "payment.captured",
         "offset_hours": 36,
-        "amount_cents": 4900,
+        "amount_minor": 4900,
         "currency": "USD",
         "actor": "cust_mock_gamma",
         "payload": {"method": "card", "order_id": "order_mock_003"},
@@ -46,7 +53,7 @@ _MOCK_RAZORPAY_EVENTS: list[dict[str, Any]] = [
         "external_id": "rzp_mock_ref_004",
         "event_type": "payment.refunded",
         "offset_hours": 60,
-        "amount_cents": 4900,
+        "amount_minor": 4900,
         "currency": "USD",
         "actor": "cust_mock_gamma",
         "payload": {"reason": "requested_by_customer", "payment_id": "rzp_mock_pay_003"},
@@ -55,7 +62,7 @@ _MOCK_RAZORPAY_EVENTS: list[dict[str, Any]] = [
         "external_id": "rzp_mock_sub_cancel_005",
         "event_type": "subscription.cancelled",
         "offset_hours": 72,
-        "amount_cents": 9900,
+        "amount_minor": 9900,
         "currency": "USD",
         "actor": "cust_mock_delta",
         "payload": {"subscription_id": "sub_mock_004", "cancelled_at_cycle_end": False},
@@ -63,11 +70,39 @@ _MOCK_RAZORPAY_EVENTS: list[dict[str, Any]] = [
 ]
 
 
+def _extract_correlation_payload(entity: dict[str, Any]) -> dict[str, Any]:
+    """Extract safe payment/order/subscription correlation fields without secrets."""
+    payload: dict[str, Any] = {
+        "entity": entity.get("entity"),
+        "status": entity.get("status"),
+        "method": entity.get("method"),
+        "order_id": entity.get("order_id"),
+    }
+    for key in (
+        "invoice_id",
+        "subscription_id",
+        "payment_id",
+        "refund_status",
+        "amount_refunded",
+        "error_code",
+        "error_reason",
+    ):
+        val = entity.get(key)
+        if val is not None and val != "":
+            payload[key] = val
+    err_desc = entity.get("error_description")
+    if isinstance(err_desc, str) and err_desc.strip():
+        payload["error_description"] = err_desc.strip()[:240]
+    return payload
+
+
 class RazorpayConnector(BaseConnector):
     """
     Razorpay connector supporting Test Mode API syncs and deterministic
     conditional mock-billing fallback when Test Mode credentials are unavailable.
 
+    Razorpay transmits all monetary values in currency-specific minor units
+    (e.g., paise for INR, cents for USD, yen for JPY, fils for KWD).
     Live Razorpay keys (``rzp_live_...``) are strictly rejected.
     """
 
@@ -177,17 +212,31 @@ class RazorpayConnector(BaseConnector):
             else:
                 dt = _mock_base_time() + timedelta(hours=item.get("offset_hours", 0))
 
+            currency_norm = normalize_currency(item.get("currency", "USD"), allow_none=True)
+            amount_raw = item.get("amount_minor")
+            if amount_raw is None:
+                amount_raw = item.get("amount_cents")
+            amount_minor = int(amount_raw) if amount_raw is not None else None
+            exponent = (
+                get_minor_unit_exponent(currency_norm)
+                if amount_minor is not None and currency_norm is not None
+                else None
+            )
+
             evt = NormalizedEvent(
                 source=self.provider,
                 external_id=str(item["external_id"]),
                 event_type=str(item["event_type"]),
                 occurred_at=dt,
-                amount_cents=item.get("amount_cents"),
-                currency=item.get("currency", "USD"),
+                amount_minor=amount_minor,
+                minor_unit_exponent=exponent,
+                currency=currency_norm,
                 actor=item.get("actor"),
+                is_synthetic=True,
                 payload={
                     **dict(item.get("payload") or {}),
                     "billing_mode": "mock_fallback",
+                    "synthetic": True,
                 },
             )
             if since_utc is None or evt.occurred_at >= since_utc:
@@ -240,6 +289,7 @@ class RazorpayConnector(BaseConnector):
     def normalize(self, raw_event: dict[str, Any]) -> NormalizedEvent:
         """
         Normalize a Razorpay API object or webhook envelope into a NormalizedEvent.
+        Preserves exact integer minor units (``amount_minor``) and ISO-4217 currency precision.
         """
         # Handle Razorpay webhook envelope {"event": "payment.captured", "payload": {"payment": {"entity": ...}}}
         if "event" in raw_event and isinstance(raw_event.get("payload"), dict):
@@ -263,8 +313,16 @@ class RazorpayConnector(BaseConnector):
                 else datetime.now(timezone.utc)
             )
             amount_raw = entity.get("amount")
-            amount_cents = int(amount_raw) if amount_raw is not None else None
-            currency = entity.get("currency")
+            amount_minor = int(amount_raw) if amount_raw is not None else None
+            try:
+                currency = normalize_currency(entity.get("currency"), allow_none=True)
+            except InvalidCurrencyError as exc:
+                raise ConnectorError(str(exc)) from exc
+            exponent = (
+                get_minor_unit_exponent(currency)
+                if amount_minor is not None and currency is not None
+                else None
+            )
             actor = entity.get("email") or entity.get("customer_id") or entity.get("contact")
 
             return NormalizedEvent(
@@ -272,15 +330,12 @@ class RazorpayConnector(BaseConnector):
                 external_id=external_id,
                 event_type=event_name,
                 occurred_at=occurred_at,
-                amount_cents=amount_cents,
-                currency=str(currency).upper() if currency else None,
+                amount_minor=amount_minor,
+                minor_unit_exponent=exponent,
+                currency=currency,
                 actor=str(actor) if actor else None,
-                payload={
-                    "entity": entity.get("entity"),
-                    "status": entity.get("status"),
-                    "method": entity.get("method"),
-                    "order_id": entity.get("order_id"),
-                },
+                is_synthetic=bool(raw_event.get("is_synthetic", False)),
+                payload=_extract_correlation_payload(entity),
             )
 
         # Handle direct Razorpay API payment/subscription entity
@@ -314,21 +369,31 @@ class RazorpayConnector(BaseConnector):
             else datetime.now(timezone.utc)
         )
         amount_raw = raw_event.get("amount")
-        currency = raw_event.get("currency")
+        amount_minor = int(amount_raw) if amount_raw is not None else None
+        try:
+            currency = normalize_currency(raw_event.get("currency"), allow_none=True)
+        except InvalidCurrencyError as exc:
+            raise ConnectorError(str(exc)) from exc
+        exponent = (
+            get_minor_unit_exponent(currency)
+            if amount_minor is not None and currency is not None
+            else None
+        )
         actor = raw_event.get("email") or raw_event.get("customer_id")
+
+        payload = _extract_correlation_payload(raw_event)
+        payload["entity"] = entity_kind
+        payload["status"] = status
 
         return NormalizedEvent(
             source=self.provider,
             external_id=entity_id,
             event_type=event_type,
             occurred_at=occurred_at,
-            amount_cents=int(amount_raw) if amount_raw is not None else None,
-            currency=str(currency).upper() if currency else None,
+            amount_minor=amount_minor,
+            minor_unit_exponent=exponent,
+            currency=currency,
             actor=str(actor) if actor else None,
-            payload={
-                "entity": entity_kind,
-                "status": status,
-                "method": raw_event.get("method"),
-                "order_id": raw_event.get("order_id"),
-            },
+            is_synthetic=bool(raw_event.get("is_synthetic", False)),
+            payload=payload,
         )

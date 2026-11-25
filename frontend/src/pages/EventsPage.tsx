@@ -4,7 +4,7 @@ import { EventsIcon } from "../components/Icons";
 import { type BadgeTone, StatusBadge } from "../components/StatusBadge";
 import { useAuth } from "../context/AuthContext";
 import { ApiError, apiClient } from "../lib/api";
-import { formatCurrencyCents, formatDateTime } from "../lib/format";
+import { formatDateTime, formatMoneyMinor } from "../lib/format";
 import type { EventItem } from "../types/api";
 
 interface EventsPageProps {
@@ -280,6 +280,7 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
             ) : (
               filteredEvents.map((evt) => {
                 const isExpanded = expandedId === evt.id;
+                const minorAmt = evt.amount_minor ?? evt.amount_cents;
                 const isDebit =
                   evt.event_type === "payment.refunded" ||
                   evt.event_type === "subscription.cancelled" ||
@@ -298,9 +299,14 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
                         {formatDateTime(evt.occurred_at)}
                       </td>
                       <td>
-                        <StatusBadge tone={sourceBadgeTone(evt.source)} dot>
-                          {evt.source}
-                        </StatusBadge>
+                        <div className="row-actions" style={{ gap: 6 }}>
+                          <StatusBadge tone={sourceBadgeTone(evt.source)} dot>
+                            {evt.source}
+                          </StatusBadge>
+                          {evt.is_synthetic && (
+                            <StatusBadge tone="warn">synthetic</StatusBadge>
+                          )}
+                        </div>
                       </td>
                       <td>
                         <StatusBadge tone={eventTypeBadgeTone(evt.event_type)}>
@@ -313,16 +319,17 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
                         className="num-col"
                         style={{
                           color:
-                            evt.amount_cents === null
+                            minorAmt === null
                               ? "var(--text-muted)"
                               : isDebit
                                 ? "var(--danger-text)"
                                 : "var(--accent-text)",
-                          fontWeight: evt.amount_cents !== null ? 600 : 400,
+                          fontWeight: minorAmt !== null ? 600 : 400,
                         }}
                       >
-                        {evt.amount_cents !== null
-                          ? formatCurrencyCents(evt.amount_cents, evt.currency || "USD")
+                        {minorAmt !== null
+                          ? evt.formatted_amount ??
+                            formatMoneyMinor(minorAmt, evt.currency, evt.minor_unit_exponent)
                           : "—"}
                       </td>
                       <td
