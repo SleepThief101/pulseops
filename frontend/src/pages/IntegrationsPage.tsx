@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { EmptyState } from "../components/EmptyState";
 import { RefreshIcon, UploadIcon } from "../components/Icons";
+import { type BadgeTone, StatusBadge } from "../components/StatusBadge";
 import { useAuth } from "../context/AuthContext";
 import { API_BASE_URL, ApiError, apiClient } from "../lib/api";
 import { formatDateTime } from "../lib/format";
@@ -10,6 +12,19 @@ const SAMPLE_CSV = [
   `subscription.charged,${new Date().toISOString()},14900,USD,cust_csv_01,scale`,
   `issue.closed,${new Date().toISOString()},,,alice,`,
 ].join("\n");
+
+function integrationTone(status: IntegrationItem["status"]): BadgeTone {
+  if (status === "active") return "ok";
+  if (status === "pending") return "warn";
+  if (status === "disconnected" || status === "inactive") return "neutral";
+  return "err";
+}
+
+function syncRunTone(status: SyncRunItem["status"]): BadgeTone {
+  if (status === "completed") return "ok";
+  if (status === "failed") return "err";
+  return "warn";
+}
 
 export function IntegrationsPage() {
   const { token, activeOrg, logout } = useAuth();
@@ -187,7 +202,7 @@ export function IntegrationsPage() {
   return (
     <>
       {statusMsg && (
-        <div className="alert alert-ok" role="status">
+        <div className="alert alert-ok" role="status" aria-live="polite">
           <span>{statusMsg}</span>
         </div>
       )}
@@ -197,235 +212,17 @@ export function IntegrationsPage() {
         </div>
       )}
 
-      <div className="grid-charts">
+      {/* Top row: Connected Connectors & Sync Audit */}
+      <div className="grid-2col">
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h3 className="panel-title">Connect Integration</h3>
-              <p className="panel-subtitle">
-                Credentials are encrypted at rest with Fernet before storage
-              </p>
-            </div>
-            {!isOwner && <span className="badge badge-warn">Owner Only</span>}
-          </div>
-
-          <div className="panel-pad">
-            {!isOwner && (
-              <div className="alert alert-warn" style={{ marginBottom: 14 }}>
-                Only organization owners can connect or remove integrations.
-              </div>
-            )}
-            <form onSubmit={handleConnect}>
-              <div className="form-group">
-                <label className="form-label" htmlFor="provider">
-                  Connector Provider
-                </label>
-                <select
-                  id="provider"
-                  className="select"
-                  value={provider}
-                  disabled={!isOwner || busy}
-                  onChange={(e) => setProvider(e.target.value as "razorpay" | "github" | "fake")}
-                >
-                  <option value="razorpay">Razorpay (Billing &amp; Churn)</option>
-                  <option value="github">GitHub (PRs &amp; Issues)</option>
-                  <option value="fake">Fake Connector (Synthetic Dev/Test)</option>
-                </select>
-              </div>
-
-              {provider !== "fake" && (
-                <div className="form-group">
-                  <label className="form-label" htmlFor="connMode">
-                    Connection Mode
-                  </label>
-                  <select
-                    id="connMode"
-                    className="select"
-                    value={mode}
-                    disabled={!isOwner || busy}
-                    onChange={(e) => setMode(e.target.value as "mock" | "credentials")}
-                  >
-                    <option value="mock">Mock / Synthetic Fallback (No External API)</option>
-                    <option value="credentials">Test Mode Keys / Access Token</option>
-                  </select>
-                </div>
-              )}
-
-              {provider === "github" && (
-                <div className="form-group">
-                  <label className="form-label" htmlFor="ghRepo">
-                    Repository (owner/name)
-                  </label>
-                  <input
-                    id="ghRepo"
-                    className="input mono"
-                    value={repo}
-                    disabled={!isOwner || busy}
-                    onChange={(e) => setRepo(e.target.value)}
-                    required
-                  />
-                </div>
-              )}
-
-              {provider === "razorpay" && mode === "credentials" && (
-                <>
-                  <div className="form-group">
-                    <label className="form-label" htmlFor="rzpKey">
-                      Razorpay Test Key ID (rzp_test_...)
-                    </label>
-                    <input
-                      id="rzpKey"
-                      className="input mono"
-                      value={keyId}
-                      disabled={!isOwner || busy}
-                      onChange={(e) => setKeyId(e.target.value)}
-                      placeholder="rzp_test_..."
-                      required
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label" htmlFor="rzpSecret">
-                      Razorpay Key Secret
-                    </label>
-                    <input
-                      id="rzpSecret"
-                      className="input"
-                      type="password"
-                      value={secretOrToken}
-                      disabled={!isOwner || busy}
-                      onChange={(e) => setSecretOrToken(e.target.value)}
-                      required
-                    />
-                  </div>
-                </>
-              )}
-
-              {provider === "github" && mode === "credentials" && (
-                <div className="form-group">
-                  <label className="form-label" htmlFor="ghToken">
-                    GitHub Personal Access Token
-                  </label>
-                  <input
-                    id="ghToken"
-                    className="input"
-                    type="password"
-                    value={secretOrToken}
-                    disabled={!isOwner || busy}
-                    onChange={(e) => setSecretOrToken(e.target.value)}
-                    required
-                  />
-                </div>
-              )}
-
-              {(provider === "razorpay" || provider === "github") && (
-                <div className="form-group">
-                  <label className="form-label" htmlFor="whSecret">
-                    Webhook Secret (optional)
-                  </label>
-                  <input
-                    id="whSecret"
-                    className="input"
-                    type="password"
-                    value={webhookSecret}
-                    disabled={!isOwner || busy}
-                    onChange={(e) => setWebhookSecret(e.target.value)}
-                    placeholder="Used to verify inbound HMAC-SHA256 webhooks"
-                  />
-                  {activeOrg && (
-                    <div className="form-hint">
-                      Webhook URL:{" "}
-                      <code>
-                        {API_BASE_URL}/webhooks/{provider}/{activeOrg.organization_id}
-                      </code>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <button className="btn" type="submit" disabled={!isOwner || busy}>
-                Connect {provider}
-              </button>
-            </form>
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-header">
-            <div>
-              <h3 className="panel-title">CSV Event Import</h3>
-              <p className="panel-subtitle">
-                Idempotent SHA-256 deduplicated spreadsheet ingestion (max 2 MB)
-              </p>
-            </div>
-            {!canOperate && <span className="badge badge-warn">Member+ Required</span>}
-          </div>
-
-          <div className="panel-pad">
-            {!canOperate && (
-              <div className="alert alert-warn" style={{ marginBottom: 14 }}>
-                Read-only viewer role cannot import CSV events (member or owner role required).
-              </div>
-            )}
-            <form onSubmit={handleCsvImport}>
-              <div className="form-group">
-                <label className="form-label" htmlFor="csvFile">
-                  Upload CSV File (.csv)
-                </label>
-                <div className="dropzone">
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <UploadIcon size={16} />
-                    <div>
-                      <div style={{ fontSize: "0.82rem", fontWeight: 500 }}>
-                        {csvFileName ? csvFileName : "Choose a UTF-8 CSV file from disk"}
-                      </div>
-                      <div className="form-hint">
-                        Required: <code>event_type</code>, <code>occurred_at</code> · Optional:{" "}
-                        <code>amount_cents</code>, <code>currency</code>, <code>actor</code>
-                      </div>
-                    </div>
-                  </div>
-                  <input
-                    id="csvFile"
-                    type="file"
-                    accept=".csv,text/csv"
-                    disabled={!canOperate || busy}
-                    onChange={handleCsvFileSelect}
-                    style={{ fontSize: "0.78rem", maxWidth: 210 }}
-                  />
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label" htmlFor="csvInput">
-                  CSV Payload Preview / Editor
-                </label>
-                <textarea
-                  id="csvInput"
-                  className="textarea"
-                  rows={6}
-                  value={csvText}
-                  onChange={(e) => setCsvText(e.target.value)}
-                  disabled={!canOperate || busy}
-                />
-              </div>
-
-              <button className="btn" type="submit" disabled={!canOperate || busy}>
-                <UploadIcon size={14} />
-                Import CSV Events
-              </button>
-            </form>
-          </div>
-        </section>
-      </div>
-
-      <div className="grid-charts">
-        <section className="panel">
-          <div className="panel-header">
-            <div>
-              <h3 className="panel-title">Connected Integrations</h3>
+              <h2 className="panel-title">Connected Integrations</h2>
               <p className="panel-subtitle">Active sources scoped to this organization</p>
             </div>
-            <span className="badge tabular">{integrations.length} connected</span>
+            <StatusBadge tone="neutral" className="tabular">
+              {integrations.length} connected
+            </StatusBadge>
           </div>
           <div className="table-wrap">
             <table>
@@ -440,31 +237,31 @@ export function IntegrationsPage() {
               <tbody>
                 {integrations.length === 0 ? (
                   <tr>
-                    <td colSpan={4} style={{ color: "var(--text-muted)", textAlign: "center", padding: 24 }}>
-                      No integrations connected yet.
+                    <td colSpan={4}>
+                      <EmptyState
+                        title="No integrations connected"
+                        description="Configure Razorpay, GitHub, or Fake connector below to begin ingesting data."
+                        minHeight={120}
+                      />
                     </td>
                   </tr>
                 ) : (
                   integrations.map((item) => (
                     <tr key={item.id}>
                       <td>
-                        <strong style={{ textTransform: "capitalize" }}>{item.provider}</strong>
+                        <strong style={{ textTransform: "capitalize", fontWeight: 600 }}>
+                          {item.provider}
+                        </strong>
                       </td>
                       <td>
-                        <span
-                          className={`badge ${
-                            item.status === "active" ? "badge-ok" : "badge-err"
-                          }`}
-                        >
-                          <span
-                            className={`status-dot ${
-                              item.status === "active" ? "dot-ok" : "dot-err"
-                            }`}
-                          />
+                        <StatusBadge tone={integrationTone(item.status)} dot>
                           {item.status}
-                        </span>
+                        </StatusBadge>
                       </td>
-                      <td className="tabular" style={{ color: "var(--text-secondary)" }}>
+                      <td
+                        className="tabular"
+                        style={{ color: "var(--text-secondary)", fontSize: "0.84rem" }}
+                      >
                         {formatDateTime(item.last_synced_at)}
                       </td>
                       <td style={{ textAlign: "right" }}>
@@ -476,7 +273,7 @@ export function IntegrationsPage() {
                             onClick={() => handleSync(item.id)}
                           >
                             <RefreshIcon size={12} />
-                            {syncingId === item.id ? "Syncing..." : "Sync Now"}
+                            {syncingId === item.id ? "Syncing…" : "Sync Now"}
                           </button>
                           {isOwner && confirmDeleteId === item.id && (
                             <>
@@ -521,10 +318,12 @@ export function IntegrationsPage() {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h3 className="panel-title">Recent Sync Runs</h3>
+              <h2 className="panel-title">Recent Sync Runs</h2>
               <p className="panel-subtitle">Worker &amp; manual ingestion audit trail</p>
             </div>
-            <span className="badge tabular">{syncRuns.length} runs</span>
+            <StatusBadge tone="neutral" className="tabular">
+              {syncRuns.length} runs
+            </StatusBadge>
           </div>
           <div className="table-wrap">
             <table>
@@ -540,46 +339,43 @@ export function IntegrationsPage() {
               <tbody>
                 {syncRuns.length === 0 ? (
                   <tr>
-                    <td colSpan={5} style={{ color: "var(--text-muted)", textAlign: "center", padding: 24 }}>
-                      No sync runs recorded yet.
+                    <td colSpan={5}>
+                      <EmptyState
+                        title="No sync runs yet"
+                        description="Run a manual or scheduled connector sync to view ingestion counts."
+                        minHeight={120}
+                      />
                     </td>
                   </tr>
                 ) : (
                   syncRuns.map((run) => (
                     <tr key={run.id}>
                       <td>
-                        <span
-                          className={`badge ${
-                            run.status === "completed"
-                              ? "badge-ok"
-                              : run.status === "failed"
-                                ? "badge-err"
-                                : "badge-warn"
-                          }`}
-                        >
-                          <span
-                            className={`status-dot ${
-                              run.status === "completed"
-                                ? "dot-ok"
-                                : run.status === "failed"
-                                  ? "dot-err"
-                                  : "dot-warn"
-                            }`}
-                          />
+                        <StatusBadge tone={syncRunTone(run.status)} dot>
                           {run.status}
-                        </span>
+                        </StatusBadge>
                         {run.status === "failed" && run.error_message && (
                           <div className="sync-error-note">{run.error_message}</div>
                         )}
                       </td>
                       <td className="num-col">{run.events_received}</td>
-                      <td className="num-col" style={{ color: "var(--accent-text)", fontWeight: 500 }}>
+                      <td
+                        className="num-col"
+                        style={{ color: "var(--accent-text)", fontWeight: 500 }}
+                      >
                         {run.events_inserted}
                       </td>
                       <td className="num-col" style={{ color: "var(--text-muted)" }}>
                         {run.events_skipped}
                       </td>
-                      <td className="tabular" style={{ color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                      <td
+                        className="tabular"
+                        style={{
+                          color: "var(--text-secondary)",
+                          whiteSpace: "nowrap",
+                          fontSize: "0.84rem",
+                        }}
+                      >
                         {formatDateTime(run.started_at)}
                       </td>
                     </tr>
@@ -587,6 +383,245 @@ export function IntegrationsPage() {
                 )}
               </tbody>
             </table>
+          </div>
+        </section>
+      </div>
+
+      {/* Bottom row: Connect Form + CSV Import */}
+      <div className="grid-2col">
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h2 className="panel-title">Connect Integration</h2>
+              <p className="panel-subtitle">
+                Credentials are encrypted at rest with Fernet before storage
+              </p>
+            </div>
+            {!isOwner && <StatusBadge tone="warn">Owner Only</StatusBadge>}
+          </div>
+
+          <div className="panel-pad">
+            {!isOwner && (
+              <div className="alert alert-warn" style={{ marginBottom: 16 }}>
+                Only organization owners can connect or remove integrations.
+              </div>
+            )}
+            <form onSubmit={handleConnect}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="provider">
+                  Connector Provider
+                </label>
+                <select
+                  id="provider"
+                  name="provider"
+                  className="select"
+                  value={provider}
+                  disabled={!isOwner || busy}
+                  onChange={(e) => setProvider(e.target.value as "razorpay" | "github" | "fake")}
+                >
+                  <option value="razorpay">Razorpay (Billing &amp; Churn)</option>
+                  <option value="github">GitHub (PRs &amp; Issues)</option>
+                  <option value="fake">Fake Connector (Synthetic Dev/Test)</option>
+                </select>
+              </div>
+
+              {provider !== "fake" && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="connMode">
+                    Connection Mode
+                  </label>
+                  <select
+                    id="connMode"
+                    name="connMode"
+                    className="select"
+                    value={mode}
+                    disabled={!isOwner || busy}
+                    onChange={(e) => setMode(e.target.value as "mock" | "credentials")}
+                  >
+                    <option value="mock">Mock / Synthetic Fallback (No External API)</option>
+                    <option value="credentials">Test Mode Keys / Access Token</option>
+                  </select>
+                </div>
+              )}
+
+              {provider === "github" && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="ghRepo">
+                    Repository (owner/name)
+                  </label>
+                  <input
+                    id="ghRepo"
+                    name="ghRepo"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="input mono"
+                    value={repo}
+                    disabled={!isOwner || busy}
+                    onChange={(e) => setRepo(e.target.value)}
+                    placeholder="owner/repository…"
+                    required
+                  />
+                </div>
+              )}
+
+              {provider === "razorpay" && mode === "credentials" && (
+                <>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="rzpKey">
+                      Razorpay Test Key ID (rzp_test_…)
+                    </label>
+                    <input
+                      id="rzpKey"
+                      name="rzpKey"
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="input mono"
+                      value={keyId}
+                      disabled={!isOwner || busy}
+                      onChange={(e) => setKeyId(e.target.value)}
+                      placeholder="rzp_test_…"
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="rzpSecret">
+                      Razorpay Key Secret
+                    </label>
+                    <input
+                      id="rzpSecret"
+                      name="rzpSecret"
+                      autoComplete="new-password"
+                      className="input"
+                      type="password"
+                      value={secretOrToken}
+                      disabled={!isOwner || busy}
+                      onChange={(e) => setSecretOrToken(e.target.value)}
+                      required
+                    />
+                  </div>
+                </>
+              )}
+
+              {provider === "github" && mode === "credentials" && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="ghToken">
+                    GitHub Personal Access Token
+                  </label>
+                  <input
+                    id="ghToken"
+                    name="ghToken"
+                    autoComplete="new-password"
+                    className="input"
+                    type="password"
+                    value={secretOrToken}
+                    disabled={!isOwner || busy}
+                    onChange={(e) => setSecretOrToken(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
+
+              {(provider === "razorpay" || provider === "github") && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="whSecret">
+                    Webhook Secret (optional)
+                  </label>
+                  <input
+                    id="whSecret"
+                    name="whSecret"
+                    autoComplete="new-password"
+                    className="input"
+                    type="password"
+                    value={webhookSecret}
+                    disabled={!isOwner || busy}
+                    onChange={(e) => setWebhookSecret(e.target.value)}
+                    placeholder="HMAC-SHA256 webhook verification secret…"
+                  />
+                  {activeOrg && (
+                    <div className="form-hint">
+                      Webhook URL:{" "}
+                      <code>
+                        {API_BASE_URL}/webhooks/{provider}/{activeOrg.organization_id}
+                      </code>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <button className="btn" type="submit" disabled={!isOwner || busy}>
+                Connect {provider}
+              </button>
+            </form>
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h2 className="panel-title">CSV Event Import</h2>
+              <p className="panel-subtitle">
+                Idempotent SHA-256 deduplicated spreadsheet ingestion (max 2&nbsp;MB)
+              </p>
+            </div>
+            {!canOperate && <StatusBadge tone="warn">Member+ Required</StatusBadge>}
+          </div>
+
+          <div className="panel-pad">
+            {!canOperate && (
+              <div className="alert alert-warn" style={{ marginBottom: 16 }}>
+                Read-only viewer role cannot import CSV events (member or owner role required).
+              </div>
+            )}
+            <form onSubmit={handleCsvImport}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="csvFile">
+                  Upload CSV File (.csv)
+                </label>
+                <div className="dropzone">
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <UploadIcon size={16} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontSize: "0.9rem", fontWeight: 500 }}>
+                        {csvFileName ? csvFileName : "Choose a UTF-8 CSV file from disk"}
+                      </div>
+                      <div className="form-hint">
+                        Required: <code>event_type</code>, <code>occurred_at</code> · Optional:{" "}
+                        <code>amount_cents</code>, <code>currency</code>, <code>actor</code>
+                      </div>
+                    </div>
+                  </div>
+                  <input
+                    id="csvFile"
+                    type="file"
+                    accept=".csv,text/csv"
+                    disabled={!canOperate || busy}
+                    onChange={handleCsvFileSelect}
+                    style={{ fontSize: "0.84rem", maxWidth: "100%" }}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="csvInput">
+                  CSV Payload Preview / Editor
+                </label>
+                <textarea
+                  id="csvInput"
+                  name="csvInput"
+                  spellCheck={false}
+                  className="textarea"
+                  rows={6}
+                  value={csvText}
+                  onChange={(e) => setCsvText(e.target.value)}
+                  disabled={!canOperate || busy}
+                />
+              </div>
+
+              <button className="btn" type="submit" disabled={!canOperate || busy}>
+                <UploadIcon size={14} />
+                Import CSV Events
+              </button>
+            </form>
           </div>
         </section>
       </div>

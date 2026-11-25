@@ -8,8 +8,6 @@ interface PulseOpsLogoProps {
 /**
  * Reusable PulseOps brand mark combining an architectural control tower
  * observation deck and pylons with an integrated live signal pulse.
- * Uses ``currentColor`` for structural geometry so it adapts cleanly across
- * both light and dark surfaces.
  */
 export function PulseOpsMark({ size = 24 }: { size?: number }) {
   return (
@@ -22,7 +20,7 @@ export function PulseOpsMark({ size = 24 }: { size?: number }) {
       style={{ flexShrink: 0, display: "block" }}
     >
       {/* Beacon node */}
-      <circle cx="12" cy="3.2" r="1.25" fill="var(--accent, #10b981)" />
+      <circle cx="12" cy="3.2" r="1.25" fill="var(--accent-action, #0ea5e9)" />
       {/* Control tower observation deck */}
       <path
         d="M4.5 7.5L6.75 5H17.25L19.5 7.5L17.75 10.75H6.25L4.5 7.5Z"
@@ -33,7 +31,7 @@ export function PulseOpsMark({ size = 24 }: { size?: number }) {
       {/* Live telemetry pulse motif */}
       <path
         d="M7.25 7.85H9.6L10.95 6L12.7 9.65L14.1 7.85H16.75"
-        stroke="var(--accent, #10b981)"
+        stroke="var(--accent-action, #0ea5e9)"
         strokeWidth="1.65"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -65,13 +63,13 @@ export function PulseOpsLogo({
 }: PulseOpsLogoProps) {
   const isLight = tone === "light";
   const color = isLight
-    ? "#09090b"
+    ? "#0d0d0f"
     : tone === "dark"
-      ? "#f4f4f5"
+      ? "#f2f2f3"
       : "var(--text-primary, currentColor)";
 
   return (
-    <div className="brand-lockup" style={{ color, padding: 0 }}>
+    <div className="brand-lockup" style={{ color, padding: 0 }} translate="no">
       <div
         className="brand-mark-badge"
         aria-hidden="true"
@@ -79,7 +77,7 @@ export function PulseOpsLogo({
           isLight
             ? {
                 background: "#f4f4f5",
-                borderColor: "rgba(9, 9, 11, 0.14)",
+                borderColor: "rgba(13, 13, 15, 0.14)",
                 boxShadow: "none",
               }
             : undefined

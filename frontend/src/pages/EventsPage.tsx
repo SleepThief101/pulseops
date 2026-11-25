@@ -1,4 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { EmptyState } from "../components/EmptyState";
+import { EventsIcon } from "../components/Icons";
+import { type BadgeTone, StatusBadge } from "../components/StatusBadge";
 import { useAuth } from "../context/AuthContext";
 import { ApiError, apiClient } from "../lib/api";
 import { formatCurrencyCents, formatDateTime } from "../lib/format";
@@ -16,11 +19,23 @@ const SOURCES = [
   { id: "fake", label: "Fake" },
 ];
 
-function sourceBadgeMeta(source: string): { cls: string; dot: string } {
-  if (source === "razorpay") return { cls: "badge badge-ok", dot: "dot-ok" };
-  if (source === "github") return { cls: "badge badge-info", dot: "dot-info" };
-  if (source === "csv") return { cls: "badge badge-warn", dot: "dot-warn" };
-  return { cls: "badge", dot: "dot-muted" };
+function sourceBadgeTone(source: string): BadgeTone {
+  if (source === "razorpay") return "ok";
+  if (source === "github") return "info";
+  if (source === "csv") return "warn";
+  return "neutral";
+}
+
+function eventTypeBadgeTone(eventType: string): BadgeTone {
+  if (eventType === "payment.failed" || eventType === "subscription.cancelled") {
+    return "err";
+  }
+  if (eventType === "payment.refunded") return "warn";
+  if (eventType === "subscription.charged" || eventType === "payment.captured") {
+    return "ok";
+  }
+  if (eventType === "pr.merged" || eventType === "issue.closed") return "action";
+  return "neutral";
 }
 
 const PAGE_SIZE = 50;
@@ -122,9 +137,19 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
     );
   }, [events, searchQuery]);
 
+  const hasActiveFilters = Boolean(sourceFilter || eventTypeFilter || searchQuery.trim());
+
+  function clearFilters() {
+    setSourceFilter("");
+    setEventTypeFilter("");
+    setSearchQuery("");
+    setOffset(0);
+    setExpandedId(null);
+  }
+
   return (
     <section className="panel">
-      <div className="panel-header">
+      <div className="events-toolbar">
         <div className="row-actions" style={{ gap: 10 }}>
           <div className="segmented" role="group" aria-label="Filter by source">
             {SOURCES.map((src) => (
@@ -147,7 +172,7 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
           <select
             aria-label="Filter by event type"
             className="select"
-            style={{ width: "auto", padding: "6px 10px", fontSize: "0.8rem" }}
+            style={{ width: "auto", height: 36, minWidth: 175, fontSize: "0.875rem" }}
             value={eventTypeFilter}
             onChange={(e) => {
               setEventTypeFilter(e.target.value);
@@ -171,29 +196,41 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
 
         <div className="row-actions">
           <input
+            name="eventsSearch"
             aria-label="Search events"
+            autoComplete="off"
+            spellCheck={false}
             className="input"
-            style={{ width: 220, padding: "6px 10px", fontSize: "0.8rem" }}
+            style={{ width: 220, height: 36, fontSize: "0.875rem" }}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Filter actor or external ID..."
+            placeholder="Filter actor or ID…"
           />
+          {hasActiveFilters && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={clearFilters}
+            >
+              Clear
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-secondary btn-sm"
             disabled={exporting || !activeOrg}
             onClick={handleExportCsv}
           >
-            {exporting ? "Exporting..." : "Export CSV"}
+            {exporting ? "Exporting…" : "Export CSV"}
           </button>
-          <span className="badge tabular">
-            {loading ? "Loading..." : `${filteredEvents.length} shown`}
-          </span>
+          <StatusBadge tone="neutral" className="tabular">
+            {loading ? "Loading…" : `${filteredEvents.length} shown`}
+          </StatusBadge>
         </div>
       </div>
 
       {error && (
-        <div style={{ padding: "12px 16px 0" }}>
+        <div style={{ padding: "14px 20px 0" }}>
           <div className="alert alert-err" role="alert">
             {error}
           </div>
@@ -216,31 +253,61 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
           <tbody>
             {!loading && filteredEvents.length === 0 ? (
               <tr>
-                <td colSpan={7} style={{ color: "var(--text-muted)", padding: "28px 16px", textAlign: "center" }}>
-                  No normalized events match the active filters.
+                <td colSpan={7}>
+                  <EmptyState
+                    icon={<EventsIcon size={28} />}
+                    title="No normalized events found"
+                    description={
+                      hasActiveFilters
+                        ? "No events match the active source, type, or search filter."
+                        : "Connect an integration or import CSV data to inspect live events."
+                    }
+                    action={
+                      hasActiveFilters ? (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={clearFilters}
+                        >
+                          Reset Filters
+                        </button>
+                      ) : undefined
+                    }
+                    minHeight={180}
+                  />
                 </td>
               </tr>
             ) : (
               filteredEvents.map((evt) => {
                 const isExpanded = expandedId === evt.id;
-                const badge = sourceBadgeMeta(evt.source);
                 const isDebit =
                   evt.event_type === "payment.refunded" ||
-                  evt.event_type === "subscription.cancelled";
+                  evt.event_type === "subscription.cancelled" ||
+                  evt.event_type === "payment.failed";
                 return (
                   <React.Fragment key={evt.id}>
                     <tr>
-                      <td className="tabular" style={{ color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                      <td
+                        className="tabular"
+                        style={{
+                          color: "var(--text-secondary)",
+                          whiteSpace: "nowrap",
+                          fontSize: "0.875rem",
+                        }}
+                      >
                         {formatDateTime(evt.occurred_at)}
                       </td>
                       <td>
-                        <span className={badge.cls}>
-                          <span className={`status-dot ${badge.dot}`} />
+                        <StatusBadge tone={sourceBadgeTone(evt.source)} dot>
                           {evt.source}
-                        </span>
+                        </StatusBadge>
                       </td>
                       <td>
-                        <code style={{ color: "var(--text-primary)" }}>{evt.event_type}</code>
+                        <StatusBadge tone={eventTypeBadgeTone(evt.event_type)}>
+                          <span className="mono" style={{ fontSize: "0.78rem" }}>
+                            {evt.event_type}
+                          </span>
+                        </StatusBadge>
                       </td>
                       <td
                         className="num-col"
@@ -251,17 +318,26 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
                               : isDebit
                                 ? "var(--danger-text)"
                                 : "var(--accent-text)",
-                          fontWeight: evt.amount_cents !== null ? 500 : 400,
+                          fontWeight: evt.amount_cents !== null ? 600 : 400,
                         }}
                       >
                         {evt.amount_cents !== null
                           ? formatCurrencyCents(evt.amount_cents, evt.currency || "USD")
                           : "—"}
                       </td>
-                      <td style={{ color: evt.actor ? "var(--text-primary)" : "var(--text-muted)" }}>
+                      <td
+                        style={{
+                          color: evt.actor ? "var(--text-primary)" : "var(--text-muted)",
+                          fontWeight: evt.actor ? 500 : 400,
+                        }}
+                      >
                         {evt.actor || "—"}
                       </td>
-                      <td className="mono" style={{ color: "var(--text-muted)" }}>
+                      <td
+                        className="mono"
+                        style={{ color: "var(--text-secondary)", fontSize: "0.84rem" }}
+                        title={evt.external_id}
+                      >
                         {evt.external_id}
                       </td>
                       <td style={{ textAlign: "right" }}>
@@ -277,7 +353,13 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
                     </tr>
                     {isExpanded && (
                       <tr>
-                        <td colSpan={7} style={{ background: "rgba(255,255,255,0.015)", padding: "12px 16px" }}>
+                        <td
+                          colSpan={7}
+                          style={{
+                            background: "var(--bg-surface-subtle)",
+                            padding: "14px 20px",
+                          }}
+                        >
                           <pre className="payload-pre">
                             {JSON.stringify(
                               {
@@ -307,7 +389,8 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
           style={{ borderTop: "1px solid var(--border-subtle)", borderBottom: "none" }}
         >
           <span className="panel-subtitle tabular">
-            Page {Math.floor(offset / PAGE_SIZE) + 1} · Showing offset {offset + 1}–{offset + events.length}
+            Page {Math.floor(offset / PAGE_SIZE) + 1} · Showing {offset + 1}–
+            {offset + events.length}
           </span>
           <div className="row-actions">
             <button

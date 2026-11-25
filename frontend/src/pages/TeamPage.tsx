@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { roleBadgeClass } from "../components/Layout";
+import { EmptyState } from "../components/EmptyState";
+import { roleBadgeTone } from "../components/Layout";
+import { StatusBadge } from "../components/StatusBadge";
 import { useAuth } from "../context/AuthContext";
 import { ApiError, apiClient } from "../lib/api";
 import { formatDateTime } from "../lib/format";
@@ -54,15 +56,18 @@ export function TeamPage() {
 
   return (
     <div className="grid-asymmetric">
+      {/* Left: Members Directory */}
       <section className="panel">
         <div className="panel-header">
           <div>
-            <h3 className="panel-title">Organization Members</h3>
+            <h2 className="panel-title">Organization Members</h2>
             <p className="panel-subtitle">
               {activeOrg?.organization_name} · Access scoped strictly to this tenant
             </p>
           </div>
-          <span className="badge tabular">{members.length} members</span>
+          <StatusBadge tone="neutral" className="tabular">
+            {members.length} members
+          </StatusBadge>
         </div>
 
         <div className="table-wrap">
@@ -75,63 +80,70 @@ export function TeamPage() {
               </tr>
             </thead>
             <tbody>
-              {members.map((m) => (
-                <tr key={m.membership_id}>
-                  <td>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span className="avatar-chip" aria-hidden="true">
-                        {m.email.slice(0, 1).toUpperCase()}
-                      </span>
-                      <span style={{ fontWeight: 500 }}>{m.email}</span>
-                    </div>
-                  </td>
-                  <td>
-                    <span className={roleBadgeClass(m.role)}>
-                      <span
-                        className={`status-dot ${
-                          m.role === "owner"
-                            ? "dot-ok"
-                            : m.role === "member"
-                              ? "dot-info"
-                              : "dot-muted"
-                        }`}
-                      />
-                      {m.role}
-                    </span>
-                  </td>
-                  <td className="tabular" style={{ color: "var(--text-secondary)" }}>
-                    {formatDateTime(m.created_at)}
+              {members.length === 0 ? (
+                <tr>
+                  <td colSpan={3}>
+                    <EmptyState
+                      title="No members loaded"
+                      description="Organization membership records will appear here."
+                      minHeight={140}
+                    />
                   </td>
                 </tr>
-              ))}
+              ) : (
+                members.map((m) => (
+                  <tr key={m.membership_id}>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span className="avatar-chip" aria-hidden="true">
+                          {m.email.slice(0, 1).toUpperCase()}
+                        </span>
+                        <span style={{ fontWeight: 500 }}>{m.email}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <StatusBadge tone={roleBadgeTone(m.role)} dot>
+                        {m.role}
+                      </StatusBadge>
+                    </td>
+                    <td
+                      className="tabular"
+                      style={{ color: "var(--text-secondary)", fontSize: "0.875rem" }}
+                    >
+                      {formatDateTime(m.created_at)}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       </section>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Right column: Add Member + Role Capability Matrix */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h3 className="panel-title">Add Existing User</h3>
+              <h2 className="panel-title">Add Existing User</h2>
               <p className="panel-subtitle">Grant organization access to a registered account</p>
             </div>
-            {!isOwner && <span className="badge badge-warn">Owner Only</span>}
+            {!isOwner && <StatusBadge tone="warn">Owner Only</StatusBadge>}
           </div>
 
           <div className="panel-pad">
             {status && (
-              <div className="alert alert-ok" style={{ marginBottom: 14 }} role="status">
+              <div className="alert alert-ok" style={{ marginBottom: 16 }} role="status" aria-live="polite">
                 {status}
               </div>
             )}
             {error && (
-              <div className="alert alert-err" style={{ marginBottom: 14 }} role="alert">
+              <div className="alert alert-err" style={{ marginBottom: 16 }} role="alert">
                 {error}
               </div>
             )}
             {!isOwner && (
-              <div className="alert alert-warn" style={{ marginBottom: 14 }}>
+              <div className="alert alert-warn" style={{ marginBottom: 16 }}>
                 Only organization owners can invite or assign member roles.
               </div>
             )}
@@ -143,13 +155,16 @@ export function TeamPage() {
                 </label>
                 <input
                   id="memberEmail"
+                  name="memberEmail"
+                  autoComplete="off"
+                  spellCheck={false}
                   className="input"
                   type="email"
                   required
-                  disabled={!isOwner}
+                  disabled={!isOwner || submitting}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="teammate@acme.io"
+                  placeholder="teammate@acme.io…"
                 />
               </div>
               <div className="form-group">
@@ -158,8 +173,9 @@ export function TeamPage() {
                 </label>
                 <select
                   id="memberRole"
+                  name="memberRole"
                   className="select"
-                  disabled={!isOwner}
+                  disabled={!isOwner || submitting}
                   value={role}
                   onChange={(e) => setRole(e.target.value as Role)}
                 >
@@ -169,7 +185,7 @@ export function TeamPage() {
                 </select>
               </div>
               <button className="btn" type="submit" disabled={!isOwner || submitting}>
-                {submitting ? "Adding..." : "Add Member"}
+                {submitting ? "Adding…" : "Add Member"}
               </button>
             </form>
           </div>
@@ -177,27 +193,49 @@ export function TeamPage() {
 
         <section className="panel">
           <div className="panel-header">
-            <h3 className="panel-title">Role Capability Matrix</h3>
+            <h2 className="panel-title">Role Capability Matrix</h2>
           </div>
-          <div className="panel-pad" style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: "0.8rem" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-              <span className="badge badge-ok">owner</span>
-              <span style={{ color: "var(--text-secondary)", textAlign: "right" }}>
-                Full admin, integrations, members, audit logs &amp; disconnect approvals
-              </span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-              <span className="badge badge-info">member</span>
-              <span style={{ color: "var(--text-secondary)", textAlign: "right" }}>
-                Sync connectors, CSV import, Copilot sync proposals &amp; approvals
-              </span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-              <span className="badge">viewer</span>
-              <span style={{ color: "var(--text-secondary)", textAlign: "right" }}>
-                Read-only dashboards, events stream &amp; read-only Copilot briefings
-              </span>
-            </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Role</th>
+                  <th>Authorized Scope</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <StatusBadge tone="ok" dot>
+                      owner
+                    </StatusBadge>
+                  </td>
+                  <td style={{ color: "var(--text-secondary)", fontSize: "0.875rem", lineHeight: 1.45 }}>
+                    Full administration, encrypted integrations, member roles, audit logs, and disconnect approvals
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <StatusBadge tone="action" dot>
+                      member
+                    </StatusBadge>
+                  </td>
+                  <td style={{ color: "var(--text-secondary)", fontSize: "0.875rem", lineHeight: 1.45 }}>
+                    Trigger connector syncs, CSV import, Copilot sync proposals &amp; approvals
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <StatusBadge tone="neutral" dot>
+                      viewer
+                    </StatusBadge>
+                  </td>
+                  <td style={{ color: "var(--text-secondary)", fontSize: "0.875rem", lineHeight: 1.45 }}>
+                    Read-only dashboards, normalized events stream &amp; read-only Copilot briefings
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </section>
       </div>

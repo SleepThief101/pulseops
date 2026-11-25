@@ -9,6 +9,7 @@ import {
   TeamIcon,
 } from "./Icons";
 import { PulseOpsLogo } from "./PulseOpsLogo";
+import { type BadgeTone, StatusBadge } from "./StatusBadge";
 
 export type NavTab = "dashboard" | "integrations" | "events" | "copilot" | "team";
 
@@ -31,7 +32,7 @@ const NAV_ITEMS: Array<{
     id: "dashboard",
     label: "Overview",
     title: "Operations Overview",
-    subtitle: "Revenue health, churn velocity, and GitHub engineering throughput",
+    subtitle: "Revenue health, churn velocity, cycle time, and engineering throughput",
     icon: <OverviewIcon className="nav-icon" />,
   },
   {
@@ -52,7 +53,7 @@ const NAV_ITEMS: Array<{
     id: "copilot",
     label: "AI Copilot",
     title: "AI Operations Copilot",
-    subtitle: "Tenant-scoped briefings with human-in-the-loop action approvals",
+    subtitle: "Tenant-scoped operational briefings with human-in-the-loop action approvals",
     icon: <CopilotIcon className="nav-icon" />,
   },
   {
@@ -70,9 +71,15 @@ const WINDOW_OPTIONS = [
   { value: 90, label: "90D" },
 ];
 
+export function roleBadgeTone(role: Role | string): BadgeTone {
+  if (role === "owner") return "ok";
+  if (role === "member") return "action";
+  return "neutral";
+}
+
 export function roleBadgeClass(role: Role | string): string {
   if (role === "owner") return "badge badge-ok";
-  if (role === "member") return "badge badge-info";
+  if (role === "member") return "badge badge-action";
   return "badge";
 }
 
@@ -89,14 +96,18 @@ export function Layout({
 
   return (
     <div className="app-layout">
+      <a href="#main-content" className="skip-nav">
+        Skip to content
+      </a>
+
       <aside className="sidebar">
-        <div style={{ padding: "4px 6px" }}>
-          <PulseOpsLogo size={22} subtitle="CONTROL TOWER" />
+        <div className="sidebar-brand">
+          <PulseOpsLogo size={20} subtitle="CONTROL TOWER" />
         </div>
 
-        <div>
+        <nav className="sidebar-nav" aria-label="Main navigation">
           <div className="sidebar-section-label">Workspace</div>
-          <nav className="nav-list" aria-label="Main navigation">
+          <div className="nav-list">
             {NAV_ITEMS.map((item) => {
               const isActive = activeTab === item.id;
               return (
@@ -112,8 +123,8 @@ export function Layout({
                 </button>
               );
             })}
-          </nav>
-        </div>
+          </div>
+        </nav>
 
         <div className="sidebar-footer">
           <div className="avatar-chip" aria-hidden="true">
@@ -122,7 +133,7 @@ export function Layout({
           <div style={{ minWidth: 0, flex: 1 }}>
             <div
               style={{
-                fontSize: "0.78rem",
+                fontSize: "0.84rem",
                 fontWeight: 500,
                 color: "var(--text-primary)",
                 overflow: "hidden",
@@ -133,7 +144,7 @@ export function Layout({
             >
               {user?.email}
             </div>
-            <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
+            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
               {activeOrg ? `${activeOrg.role} access` : "Authenticated"}
             </div>
           </div>
@@ -158,18 +169,9 @@ export function Layout({
               </select>
             )}
             {activeOrg && (
-              <span className={roleBadgeClass(activeOrg.role)}>
-                <span
-                  className={`status-dot ${
-                    activeOrg.role === "owner"
-                      ? "dot-ok"
-                      : activeOrg.role === "member"
-                        ? "dot-info"
-                        : "dot-muted"
-                  }`}
-                />
+              <StatusBadge tone={roleBadgeTone(activeOrg.role)} dot>
                 {activeOrg.role}
-              </span>
+              </StatusBadge>
             )}
           </div>
 
@@ -198,10 +200,10 @@ export function Layout({
           </div>
         </header>
 
-        <main className="content">
+        <main className="content" id="main-content">
           <div className="page-header">
             <div>
-              <h2 className="page-title">{activeMeta.title}</h2>
+              <h1 className="page-title">{activeMeta.title}</h1>
               <p className="page-desc">{activeMeta.subtitle}</p>
             </div>
           </div>

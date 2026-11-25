@@ -18,10 +18,10 @@ function ControlTowerShell() {
     return (
       <div className="auth-main" style={{ minHeight: "100vh" }}>
         <div className="panel panel-pad" style={{ maxWidth: 420, textAlign: "center" }}>
-          <div style={{ fontSize: "0.9rem", fontWeight: 500, color: "var(--text-primary)" }}>
-            Loading PulseOps workspace...
+          <div style={{ fontSize: "1rem", fontWeight: 500, color: "var(--text-primary)" }}>
+            Loading PulseOps workspace…
           </div>
-          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 6 }}>
+          <div style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginTop: 8 }}>
             If the API service is waking from idle sleep, initial connection may take up to 45 seconds.
           </div>
         </div>
@@ -37,10 +37,10 @@ function ControlTowerShell() {
     return (
       <div className="auth-main" style={{ minHeight: "100vh" }}>
         <div className="auth-card" style={{ maxWidth: 440 }}>
-          <h2 className="panel-title" style={{ marginBottom: 6 }}>
+          <h1 className="panel-title" style={{ marginBottom: 8 }}>
             Control Tower Reconnecting
-          </h2>
-          <p className="panel-subtitle" style={{ marginBottom: 14 }}>
+          </h1>
+          <p className="panel-subtitle" style={{ marginBottom: 18 }}>
             {sessionError}
           </p>
           <div className="row-actions">

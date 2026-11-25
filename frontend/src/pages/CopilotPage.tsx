@@ -1,5 +1,8 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { EmptyState } from "../components/EmptyState";
 import { CopilotIcon } from "../components/Icons";
+import { MarkdownContent } from "../components/MarkdownContent";
+import { type BadgeTone, StatusBadge } from "../components/StatusBadge";
 import { useAuth } from "../context/AuthContext";
 import { ApiError, apiClient } from "../lib/api";
 import { formatDateTime } from "../lib/format";
@@ -20,14 +23,17 @@ const QUICK_PROMPTS = [
   { text: "Propose syncing our razorpay integration", mutating: true },
 ];
 
-function proposalStatusBadge(status: CopilotProposal["status"]): { cls: string; dot: string } {
-  if (status === "executed" || status === "approved") {
-    return { cls: "badge badge-ok", dot: "dot-ok" };
-  }
-  if (status === "rejected" || status === "failed") {
-    return { cls: "badge badge-err", dot: "dot-err" };
-  }
-  return { cls: "badge badge-warn", dot: "dot-warn" };
+function proposalBorderColor(status: CopilotProposal["status"], toolName: string): string {
+  if (status === "executed" || status === "approved") return "var(--accent)";
+  if (status === "rejected" || status === "failed") return "var(--danger)";
+  if (toolName === "disconnect_integration") return "var(--danger)";
+  return "var(--warn)";
+}
+
+function proposalStatusTone(status: CopilotProposal["status"]): BadgeTone {
+  if (status === "executed" || status === "approved") return "ok";
+  if (status === "rejected" || status === "failed") return "err";
+  return "warn";
 }
 
 export function CopilotPage() {
@@ -37,15 +43,14 @@ export function CopilotPage() {
   const [proposals, setProposals] = useState<CopilotProposal[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
 
   const isOwner = activeOrg?.role === "owner";
   const canApprove = isOwner || activeOrg?.role === "member";
   const pendingCount = proposals.filter((p) => p.status === "pending").length;
 
   const canDecideProposal = (proposal: CopilotProposal): boolean => {
-    if (proposal.tool_name === "disconnect_integration") {
-      return isOwner;
-    }
+    if (proposal.tool_name === "disconnect_integration") return isOwner;
     return canApprove;
   };
 
@@ -64,14 +69,18 @@ export function CopilotPage() {
     });
   }, [activeOrg?.organization_id, refreshProposals]);
 
+  useEffect(() => {
+    if (threadRef.current) {
+      threadRef.current.scrollTop = threadRef.current.scrollHeight;
+    }
+  }, [messages, busy]);
+
   async function sendPrompt(promptText: string) {
     if (!token || !activeOrg || !promptText.trim()) return;
     const text = promptText.trim();
     const fromInput = promptText === input;
     setMessages((prev) => [...prev, { role: "user", content: text }]);
-    if (fromInput) {
-      setInput("");
-    }
+    if (fromInput) setInput("");
     setBusy(true);
     setError(null);
     try {
@@ -94,9 +103,7 @@ export function CopilotPage() {
       ]);
       await refreshProposals();
     } catch (err) {
-      if (fromInput) {
-        setInput(text);
-      }
+      if (fromInput) setInput(text);
       setError(err instanceof ApiError ? err.message : "Copilot request failed.");
     } finally {
       setBusy(false);
@@ -129,29 +136,34 @@ export function CopilotPage() {
   }
 
   return (
-    <div className="grid-asymmetric">
+    <div className="copilot-layout">
+      {/* Operations Copilot Console */}
       <section className="panel">
         <div className="panel-header">
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <CopilotIcon size={16} />
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <CopilotIcon size={18} style={{ color: "var(--ai)", opacity: 0.9 }} />
             <div>
-              <h3 className="panel-title">Operations Copilot Console</h3>
+              <h2 className="panel-title">Operations Copilot Console</h2>
               <p className="panel-subtitle">
-                Read-only KPI queries run directly; mutating actions generate approval proposals
+                Read-only queries execute directly · mutating actions create approval proposals
               </p>
             </div>
           </div>
-          <span className="badge badge-ai">Tenant Scoped</span>
+          <StatusBadge tone="ai">Tenant Scoped</StatusBadge>
         </div>
 
-        <div className="panel-pad" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div className="panel-pad" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {error && (
             <div className="alert alert-err" role="alert">
               {error}
             </div>
           )}
 
-          <div className="row-actions" aria-label="Suggested prompts">
+          <div
+            className="row-actions"
+            aria-label="Suggested prompts"
+            style={{ flexWrap: "wrap" }}
+          >
             {QUICK_PROMPTS.map((q) => {
               const disabledForViewer = q.mutating && !canApprove;
               return (
@@ -173,14 +185,20 @@ export function CopilotPage() {
             })}
           </div>
 
-          <div className="copilot-thread" aria-live="polite">
-            {messages.length === 0 ? (
-              <div style={{ color: "var(--text-muted)", margin: "auto 0", textAlign: "center", padding: 24 }}>
-                <div style={{ fontWeight: 500, color: "var(--text-secondary)", marginBottom: 4 }}>
-                  Ask PulseOps Copilot about live metrics or integration state
+          <div
+            ref={threadRef}
+            className="copilot-thread"
+            aria-live="polite"
+            aria-label="Copilot conversation"
+          >
+            {messages.length === 0 && !busy ? (
+              <div className="copilot-empty">
+                <CopilotIcon size={28} style={{ opacity: 0.25 }} />
+                <div className="copilot-empty-title">
+                  Ask Copilot about live revenue, churn, or engineering throughput
                 </div>
-                <div style={{ fontSize: "0.78rem" }}>
-                  Select a prompt above or enter a question below.
+                <div className="copilot-empty-hint">
+                  Choose a suggested operational prompt above or enter a custom query below.
                 </div>
               </div>
             ) : (
@@ -196,96 +214,128 @@ export function CopilotPage() {
                       {m.role === "user" ? "You" : "PulseOps Copilot"}
                     </span>
                     {m.role === "assistant" && m.modelUsed && (
-                      <span className="mono">
+                      <span className="mono" style={{ fontSize: "0.75rem" }}>
                         · {m.fallbackMode ? "deterministic-fallback" : m.modelUsed}
                         {m.cached ? " · cached" : ""}
                       </span>
                     )}
-                    {m.role === "assistant" && m.toolsExecuted && m.toolsExecuted.length > 0 && (
-                      <span className="mono">· tools: {m.toolsExecuted.join(", ")}</span>
-                    )}
                   </div>
-                  <div>{m.content}</div>
+                  {m.role === "assistant" ? (
+                    <MarkdownContent content={m.content} />
+                  ) : (
+                    <div>{m.content}</div>
+                  )}
+                  {m.role === "assistant" &&
+                    m.toolsExecuted &&
+                    m.toolsExecuted.length > 0 && (
+                      <div className="msg-tools" aria-label="Tools executed">
+                        {m.toolsExecuted.map((tool, tIdx) => (
+                          <StatusBadge key={`${tool}-${tIdx}`} tone="ai">
+                            {tool}
+                          </StatusBadge>
+                        ))}
+                      </div>
+                    )}
                 </div>
               ))
+            )}
+            {busy && (
+              <div
+                className="msg-bubble msg-assistant"
+                style={{ opacity: 0.78, fontStyle: "italic", fontSize: "0.9rem" }}
+              >
+                <div className="msg-meta">
+                  <span style={{ fontWeight: 600, color: "var(--text-secondary)" }}>
+                    PulseOps Copilot
+                  </span>
+                </div>
+                Analyzing tenant telemetry…
+              </div>
             )}
           </div>
 
           <form onSubmit={handleSend} className="row-actions">
             <input
+              name="copilotPrompt"
               aria-label="Copilot message"
+              autoComplete="off"
               className="input"
               style={{ flex: 1 }}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about MRR, churn, open issues, or request a sync..."
+              placeholder="Ask about MRR, churn, open issues, or request a sync…"
               disabled={busy}
             />
             <button className="btn" type="submit" disabled={busy || !input.trim()}>
-              {busy ? "Running..." : "Send"}
+              {busy ? "Running…" : "Send"}
             </button>
           </form>
         </div>
       </section>
 
+      {/* Action Proposals Queue */}
       <section className="panel">
         <div className="panel-header">
           <div>
-            <h3 className="panel-title">Action Proposals Queue</h3>
-            <p className="panel-subtitle">Explicit human approval required prior to execution</p>
+            <h2 className="panel-title">Action Proposals</h2>
+            <p className="panel-subtitle">
+              Explicit human approval required prior to execution
+            </p>
           </div>
-          <span className={`badge ${pendingCount > 0 ? "badge-warn" : "badge"} tabular`}>
+          <StatusBadge tone={pendingCount > 0 ? "warn" : "neutral"} className="tabular">
             {pendingCount} pending
-          </span>
+          </StatusBadge>
         </div>
 
-        <div className="panel-pad" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div
+          className="panel-pad"
+          style={{ display: "flex", flexDirection: "column", gap: 12 }}
+        >
           {!canApprove && (
             <div className="alert alert-warn">
-              Viewer role is read-only: member or owner permissions are required to propose or decide actions.
+              Viewer role is read-only — member or owner permissions are required to propose or decide actions.
             </div>
           )}
 
           {proposals.length === 0 ? (
-            <p className="panel-subtitle" style={{ padding: "16px 0", textAlign: "center" }}>
-              No action proposals created yet.
-            </p>
+            <EmptyState
+              title="No action proposals yet"
+              description="Mutating operations requested via Copilot will appear here for review."
+              minHeight={160}
+            />
           ) : (
             proposals.map((p) => {
-              const badge = proposalStatusBadge(p.status);
+              const borderColor = proposalBorderColor(p.status, p.tool_name);
               return (
                 <div
                   key={p.id}
-                  style={{
-                    border: "1px solid var(--border-subtle)",
-                    borderRadius: "var(--radius-md)",
-                    padding: 14,
-                    background: "var(--bg-input)",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 8,
-                  }}
+                  className="proposal-card"
+                  style={{ borderLeftColor: borderColor }}
                 >
-                  <div className="row-actions" style={{ justifyContent: "space-between" }}>
-                    <strong style={{ fontSize: "0.88rem" }}>{p.title}</strong>
-                    <span className={badge.cls}>
-                      <span className={`status-dot ${badge.dot}`} />
-                      {p.status}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-                    {p.description}
-                  </div>
                   <div
                     className="row-actions"
-                    style={{ justifyContent: "space-between", fontSize: "0.74rem", color: "var(--text-muted)" }}
+                    style={{ justifyContent: "space-between" }}
                   >
-                    <code>{p.tool_name}</code>
+                    <span className="proposal-card-title">{p.title}</span>
+                    <StatusBadge tone={proposalStatusTone(p.status)} dot>
+                      {p.status}
+                    </StatusBadge>
+                  </div>
+
+                  <div className="proposal-card-desc">{p.description}</div>
+
+                  <div className="proposal-card-meta">
+                    <code style={{ color: "var(--text-secondary)" }}>{p.tool_name}</code>
                     <span className="tabular">{formatDateTime(p.created_at)}</span>
                   </div>
-                  {p.status === "failed" && typeof p.execution_result?.error === "string" && (
-                    <div className="sync-error-note">{p.execution_result.error}</div>
-                  )}
+
+                  {p.status === "failed" &&
+                    typeof p.execution_result?.error === "string" && (
+                      <div className="sync-error-note">
+                        {p.execution_result.error}
+                      </div>
+                    )}
+
                   {p.status === "pending" && canDecideProposal(p) && (
                     <div className="row-actions" style={{ paddingTop: 4 }}>
                       <button
@@ -306,9 +356,14 @@ export function CopilotPage() {
                       </button>
                     </div>
                   )}
-                  {p.status === "pending" && canApprove && !canDecideProposal(p) && (
-                    <div className="form-hint">Owner permission required to approve or reject.</div>
-                  )}
+
+                  {p.status === "pending" &&
+                    canApprove &&
+                    !canDecideProposal(p) && (
+                      <div className="form-hint">
+                        Owner permission required to approve or reject this action.
+                      </div>
+                    )}
                 </div>
               );
             })
