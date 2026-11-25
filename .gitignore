@@ -238,6 +238,7 @@ venv/
 # Frontend
 node_modules/
 dist/
+*.tsbuildinfo
 
 # IDE
 .vscode/

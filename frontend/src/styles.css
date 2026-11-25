@@ -7,6 +7,7 @@
   --bg-canvas: #09090b;
   --bg-sidebar: #0c0c0f;
   --bg-surface: #111115;
+  --bg-surface-subtle: #0e0e12;
   --bg-surface-elevated: #17171d;
   --bg-surface-hover: rgba(255, 255, 255, 0.04);
   --bg-input: #0a0a0d;
@@ -238,7 +239,7 @@ code,
 
 .segmented {
   display: inline-flex;
-  align-items: center;
+  align-items: stretch;
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -247,6 +248,9 @@ code,
 }
 
 .segmented-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -255,6 +259,7 @@ code,
   font-weight: 500;
   border-radius: 5px;
   cursor: pointer;
+  white-space: nowrap;
   transition: background-color 120ms ease, color 120ms ease;
 }
 
@@ -1038,4 +1043,40 @@ th {
   .kpi-cell {
     border-right: none;
   }
+  .auth-main {
+    padding: 20px 14px;
+  }
+  .auth-card {
+    padding: 22px 18px;
+  }
+  .segmented-btn {
+    padding: 5px 8px;
+    font-size: 0.75rem;
+  }
+}
+
+.sync-error-note {
+  margin-top: 5px;
+  font-size: 0.73rem;
+  color: var(--danger-text);
+  line-height: 1.35;
+  max-width: 280px;
+}
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    rgba(255, 255, 255, 0.09) 50%,
+    rgba(255, 255, 255, 0.04) 75%
+  );
+  background-size: 200% 100%;
+  animation: pulseops-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes pulseops-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }

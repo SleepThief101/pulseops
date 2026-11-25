@@ -591,6 +591,62 @@ def _run_deepseek_tool_loop(
     return str(final_msg.get("content") or "Completed analysis.")
 
 
+def _propose_fallback_integration_action(
+    db: Session,
+    *,
+    organization_id: uuid.UUID,
+    user_id: uuid.UUID,
+    caller_role: str,
+    lower_message: str,
+    tool_name: str,
+    action_label: str,
+    created_proposals: list[ActionProposal],
+) -> str:
+    """Create a pending sync or disconnect proposal cleanly with role & target checks."""
+    tool = ai_tool_registry.get(tool_name)
+    if ROLE_HIERARCHY.get(caller_role, 0) < ROLE_HIERARCHY.get(tool.min_role, 99):
+        return (
+            f"Permission denied: role '{caller_role}' cannot create `{tool.name}` "
+            f"proposals ({tool.min_role} or higher role required)."
+        )
+
+    integrations = integration_service.list_integrations(
+        db, organization_id=organization_id
+    )
+    if not integrations:
+        return (
+            "No integrations are currently connected to this organization. "
+            "Connect Razorpay, GitHub, or Fake connector in Integrations first."
+        )
+
+    target = next(
+        (integ for integ in integrations if integ.provider in lower_message),
+        integrations[0],
+    )
+    raw_args: dict[str, Any] = {"integration_id": str(target.id)}
+    if tool_name == "sync_organization_integration":
+        raw_args["full_sync"] = False
+
+    validated_args = tool.validate_arguments(raw_args)
+    verb = "Sync" if action_label == "sync" else "Disconnect"
+    proposal = _create_proposal(
+        db,
+        organization_id=organization_id,
+        user_id=user_id,
+        tool=tool,
+        arguments=validated_args,
+        title=f"{verb} {target.provider} integration",
+        description=(
+            f"Proposed {action_label}ing `{target.provider}` ({target.id}) for this organization."
+        ),
+    )
+    created_proposals.append(proposal)
+    return (
+        f"Created pending approval proposal to {action_label} your `{target.provider}` integration "
+        f"(Proposal ID: {proposal.id}). Review and approve it in Action Approvals."
+    )
+
+
 def _run_deterministic_fallback(
     *,
     db: Session,
@@ -629,48 +685,29 @@ def _run_deterministic_fallback(
         CopilotToolExecutionRecord(tool_name=integ_tool.name, result=integ_status)
     )
 
-    # Detect mutating intent ("sync" or "disconnect") -> NEVER auto-execute; propose only for authorized roles!
-    if any(kw in lower for kw in ("sync", "refresh", "pull latest")):
-        sync_tool = ai_tool_registry.get("sync_organization_integration")
-        if ROLE_HIERARCHY.get(caller_role, 0) < ROLE_HIERARCHY.get(
-            sync_tool.min_role, 99
-        ):
-            return (
-                f"Permission denied: role '{caller_role}' is read-only and cannot "
-                "create integration sync proposals (member or owner role required)."
-            )
-
-        integrations = integration_service.list_integrations(
-            db, organization_id=organization_id
+    # Detect mutating intent ("disconnect" or "sync") -> NEVER auto-execute; propose only for authorized roles!
+    if any(kw in lower for kw in ("disconnect", "remove integration", "unlink")):
+        return _propose_fallback_integration_action(
+            db,
+            organization_id=organization_id,
+            user_id=user_id,
+            caller_role=caller_role,
+            lower_message=lower,
+            tool_name="disconnect_integration",
+            action_label="disconnect",
+            created_proposals=created_proposals,
         )
-        if integrations:
-            target = integrations[0]
-            for integ in integrations:
-                if integ.provider in lower:
-                    target = integ
-                    break
-            validated_args = sync_tool.validate_arguments(
-                {"integration_id": str(target.id), "full_sync": False}
-            )
-            proposal = _create_proposal(
-                db,
-                organization_id=organization_id,
-                user_id=user_id,
-                tool=sync_tool,
-                arguments=validated_args,
-                title=f"Sync {target.provider} integration",
-                description=(
-                    f"Proposed syncing `{target.provider}` ({target.id}) to ingest recent events."
-                ),
-            )
-            created_proposals.append(proposal)
-            return (
-                f"Created pending approval proposal to sync your `{target.provider}` integration "
-                f"(Proposal ID: {proposal.id}). Review and approve it in Action Approvals."
-            )
-        return (
-            "No integrations are currently connected to this organization. "
-            "Connect Razorpay, GitHub, or Fake connector in Integrations first."
+
+    if any(kw in lower for kw in ("sync", "refresh", "pull latest")):
+        return _propose_fallback_integration_action(
+            db,
+            organization_id=organization_id,
+            user_id=user_id,
+            caller_role=caller_role,
+            lower_message=lower,
+            tool_name="sync_organization_integration",
+            action_label="sync",
+            created_proposals=created_proposals,
         )
 
     mrr_dollars = summary["mrr_cents"] / 100.0

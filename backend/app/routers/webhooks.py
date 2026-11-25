@@ -66,7 +66,7 @@ async def razorpay_webhook(
         ) from exc
     except (json.JSONDecodeError, ConnectorError, ValueError) as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid webhook payload: {exc}",
         ) from exc
 
@@ -116,6 +116,6 @@ async def github_webhook(
         ) from exc
     except (json.JSONDecodeError, ConnectorError, ValueError) as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid webhook payload: {exc}",
         ) from exc

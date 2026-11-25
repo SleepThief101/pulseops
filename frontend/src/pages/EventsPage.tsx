@@ -23,19 +23,32 @@ function sourceBadgeMeta(source: string): { cls: string; dot: string } {
   return { cls: "badge", dot: "dot-muted" };
 }
 
+const PAGE_SIZE = 50;
+
 export function EventsPage({ initialSource = "" }: EventsPageProps) {
   const { token, activeOrg, logout } = useAuth();
   const [events, setEvents] = useState<EventItem[]>([]);
+  const [hasMore, setHasMore] = useState<boolean>(false);
+  const [offset, setOffset] = useState<number>(0);
   const [sourceFilter, setSourceFilter] = useState<string>(initialSource);
   const [eventTypeFilter, setEventTypeFilter] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [exporting, setExporting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setSourceFilter(initialSource);
+    setOffset(0);
   }, [initialSource]);
+
+  useEffect(() => {
+    setOffset(0);
+    setExpandedId(null);
+    setSearchQuery("");
+    setError(null);
+  }, [activeOrg?.organization_id]);
 
   useEffect(() => {
     if (!token || !activeOrg) return;
@@ -48,10 +61,14 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
         token,
         sourceFilter || undefined,
         eventTypeFilter || undefined,
-        logout
+        logout,
+        PAGE_SIZE + 1,
+        offset
       )
       .then((res) => {
-        if (!cancelled) setEvents(res);
+        if (cancelled) return;
+        setHasMore(res.length > PAGE_SIZE);
+        setEvents(res.slice(0, PAGE_SIZE));
       })
       .catch((err) => {
         if (!cancelled) {
@@ -64,7 +81,35 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [token, activeOrg, sourceFilter, eventTypeFilter, logout]);
+  }, [token, activeOrg, sourceFilter, eventTypeFilter, offset, logout]);
+
+  async function handleExportCsv() {
+    if (!token || !activeOrg) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const { filename, csvText } = await apiClient.exportEventsCsv(
+        activeOrg.organization_id,
+        token,
+        sourceFilter || undefined,
+        eventTypeFilter || undefined,
+        logout
+      );
+      const blob = new Blob([csvText], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to export CSV.");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const filteredEvents = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -88,7 +133,11 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
                 type="button"
                 aria-pressed={sourceFilter === src.id}
                 className={`segmented-btn ${sourceFilter === src.id ? "active" : ""}`}
-                onClick={() => setSourceFilter(src.id)}
+                onClick={() => {
+                  setSourceFilter(src.id);
+                  setOffset(0);
+                  setExpandedId(null);
+                }}
               >
                 {src.label}
               </button>
@@ -100,15 +149,21 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
             className="select"
             style={{ width: "auto", padding: "6px 10px", fontSize: "0.8rem" }}
             value={eventTypeFilter}
-            onChange={(e) => setEventTypeFilter(e.target.value)}
+            onChange={(e) => {
+              setEventTypeFilter(e.target.value);
+              setOffset(0);
+              setExpandedId(null);
+            }}
           >
             <option value="">All Event Types</option>
             <option value="subscription.charged">subscription.charged</option>
             <option value="payment.captured">payment.captured</option>
             <option value="payment.refunded">payment.refunded</option>
+            <option value="payment.failed">payment.failed</option>
             <option value="subscription.cancelled">subscription.cancelled</option>
             <option value="pr.opened">pr.opened</option>
             <option value="pr.merged">pr.merged</option>
+            <option value="pr.closed">pr.closed</option>
             <option value="issue.opened">issue.opened</option>
             <option value="issue.closed">issue.closed</option>
           </select>
@@ -123,8 +178,16 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Filter actor or external ID..."
           />
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={exporting || !activeOrg}
+            onClick={handleExportCsv}
+          >
+            {exporting ? "Exporting..." : "Export CSV"}
+          </button>
           <span className="badge tabular">
-            {loading ? "Loading..." : `${filteredEvents.length} events`}
+            {loading ? "Loading..." : `${filteredEvents.length} shown`}
           </span>
         </div>
       </div>
@@ -237,6 +300,41 @@ export function EventsPage({ initialSource = "" }: EventsPageProps) {
           </tbody>
         </table>
       </div>
+
+      {(offset > 0 || hasMore) && (
+        <div
+          className="panel-header"
+          style={{ borderTop: "1px solid var(--border-subtle)", borderBottom: "none" }}
+        >
+          <span className="panel-subtitle tabular">
+            Page {Math.floor(offset / PAGE_SIZE) + 1} · Showing offset {offset + 1}–{offset + events.length}
+          </span>
+          <div className="row-actions">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={loading || offset === 0}
+              onClick={() => {
+                setOffset((prev) => Math.max(0, prev - PAGE_SIZE));
+                setExpandedId(null);
+              }}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={loading || !hasMore}
+              onClick={() => {
+                setOffset((prev) => prev + PAGE_SIZE);
+                setExpandedId(null);
+              }}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

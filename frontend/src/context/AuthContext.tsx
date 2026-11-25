@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { apiClient } from "../lib/api";
+import { ApiError, apiClient } from "../lib/api";
 import type { UserOrganization, UserProfile } from "../types/api";
 
 interface AuthContextValue {
@@ -8,6 +8,8 @@ interface AuthContextValue {
   organizations: UserOrganization[];
   activeOrg: UserOrganization | null;
   loading: boolean;
+  sessionError: string | null;
+  retrySession: () => Promise<void>;
   setActiveOrgId: (orgId: string) => void;
   loginWithToken: (accessToken: string) => Promise<void>;
   logout: () => void;
@@ -25,6 +27,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.getItem(ORG_KEY)
   );
   const [loading, setLoading] = useState<boolean>(Boolean(localStorage.getItem(TOKEN_KEY)));
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
@@ -33,11 +36,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     setOrganizations([]);
     setActiveOrgIdState(null);
+    setSessionError(null);
   }, []);
 
   const hydrate = useCallback(
     async (accessToken: string) => {
       setLoading(true);
+      setSessionError(null);
       try {
         const [profile, orgs] = await Promise.all([
           apiClient.getMe(accessToken, logout),
@@ -59,11 +64,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [logout]
   );
 
+  const handleHydrateFailure = useCallback(
+    (err: unknown) => {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 404)) {
+        logout();
+        return;
+      }
+      const msg =
+        err instanceof ApiError
+          ? err.message
+          : "Unable to connect to PulseOps API. If using Render free tier, the service may be waking up.";
+      setSessionError(msg);
+    },
+    [logout]
+  );
+
   useEffect(() => {
     if (token) {
-      hydrate(token).catch(() => logout());
+      hydrate(token).catch(handleHydrateFailure);
     }
-  }, [token, hydrate, logout]);
+  }, [token, hydrate, handleHydrateFailure]);
+
+  const retrySession = useCallback(async () => {
+    if (!token) return;
+    try {
+      await hydrate(token);
+    } catch (err) {
+      handleHydrateFailure(err);
+    }
+  }, [token, hydrate, handleHydrateFailure]);
 
   const loginWithToken = useCallback(
     async (accessToken: string) => {
@@ -90,6 +119,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         organizations,
         activeOrg,
         loading,
+        sessionError,
+        retrySession,
         setActiveOrgId,
         loginWithToken,
         logout,

@@ -47,4 +47,10 @@
 
 ## Pending External Execution
 
-- [ ] Remote CI verification & cloud provisioning (GitHub push, Neon, Upstash, Render, Vercel — requires explicit user approval/execution)
+- [ ] Remote CI verification & cloud provisioning (GitHub push, Neon, Upstash, Render, Vercel — manual production deployment completed; awaiting commit/push approval for v1.0 polish changes)
+
+## v1.0 Recruiter-Ready Polish Pass
+
+- [x] Phase 1–3 Audit & Journey Verification — Verified git state (`ea77be1`), backend/frontend tests, RBAC, tenant isolation, Ruff/Gitleaks hygiene, dependency audits, and read-only deployed Vercel UI inspection (`https://pulseops-two.vercel.app/`).
+- [x] Frontend v1.0 Polish — Added Render free-tier cold-start resilience (request timeout, transient `502`/`503`/`504` GET retry, session preservation with Retry UI instead of logout, `/health` wake ping, slow-wake banner), wired `EventsPage` pagination + RFC 4180 CSV export + `pr.closed`/`payment.failed` filters, added org-switch state resets across tabs, two-step remove confirmation and inline failed `SyncRun` error visibility in `IntegrationsPage`, strict `disconnect_integration` owner-only decision gating and tool execution badges in `CopilotPage`, mobile `.segmented` alignment fix, `--bg-surface-subtle` token definition, and Vite `recharts`/`react` chunk splitting.
+- [x] Backend & Hygiene Fixes — Fixed `TestProductionSettingsValidation` `.env` isolation failure, cleared PyJWT short-key & Starlette `HTTP_422_UNPROCESSABLE_CONTENT` warnings, handled background ARQ queue failures gracefully (`SyncRun` marked `failed` + HTTP `503`), caught `EncryptionError` cleanly during sync, added `disconnect` intent RBAC support to Copilot fallback, exposed `Content-Disposition` via CORS, trimmed metrics open-issue query columns, guarded demo scripts (`seed_demo_data.py`, `reset_demo_owner_password.py`) against accidental remote/production/test execution, added `*.tsbuildinfo` to `.gitignore`, and updated `README.md` with full v1.0 deployment architecture, Mermaid diagram, limitations, and demo role table.

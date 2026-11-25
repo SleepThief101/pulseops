@@ -10,12 +10,14 @@ interface ChatMsg {
   content: string;
   modelUsed?: string;
   fallbackMode?: boolean;
+  cached?: boolean;
+  toolsExecuted?: string[];
 }
 
 const QUICK_PROMPTS = [
-  "Summarize our MRR, churn, and open issues",
-  "How is GitHub PR and issue cycle time trending?",
-  "Propose syncing our razorpay integration",
+  { text: "Summarize our MRR, churn, and open issues", mutating: false },
+  { text: "How is GitHub PR and issue cycle time trending?", mutating: false },
+  { text: "Propose syncing our razorpay integration", mutating: true },
 ];
 
 function proposalStatusBadge(status: CopilotProposal["status"]): { cls: string; dot: string } {
@@ -36,8 +38,16 @@ export function CopilotPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canApprove = activeOrg?.role === "owner" || activeOrg?.role === "member";
+  const isOwner = activeOrg?.role === "owner";
+  const canApprove = isOwner || activeOrg?.role === "member";
   const pendingCount = proposals.filter((p) => p.status === "pending").length;
+
+  const canDecideProposal = (proposal: CopilotProposal): boolean => {
+    if (proposal.tool_name === "disconnect_integration") {
+      return isOwner;
+    }
+    return canApprove;
+  };
 
   const refreshProposals = useCallback(async () => {
     if (!token || !activeOrg) return;
@@ -46,16 +56,22 @@ export function CopilotPage() {
   }, [token, activeOrg, logout]);
 
   useEffect(() => {
-    refreshProposals().catch(() => {
-      // ignore if copilot routes are unavailable
+    setMessages([]);
+    setInput("");
+    setError(null);
+    refreshProposals().catch((err) => {
+      setError(err instanceof ApiError ? err.message : "Failed to load action proposals.");
     });
-  }, [refreshProposals]);
+  }, [activeOrg?.organization_id, refreshProposals]);
 
   async function sendPrompt(promptText: string) {
     if (!token || !activeOrg || !promptText.trim()) return;
     const text = promptText.trim();
+    const fromInput = promptText === input;
     setMessages((prev) => [...prev, { role: "user", content: text }]);
-    setInput("");
+    if (fromInput) {
+      setInput("");
+    }
     setBusy(true);
     setError(null);
     try {
@@ -72,10 +88,15 @@ export function CopilotPage() {
           content: res.reply,
           modelUsed: res.model_used,
           fallbackMode: res.fallback_mode,
+          cached: res.cached,
+          toolsExecuted: res.tool_calls_executed?.map((t) => t.tool_name) ?? [],
         },
       ]);
       await refreshProposals();
     } catch (err) {
+      if (fromInput) {
+        setInput(text);
+      }
       setError(err instanceof ApiError ? err.message : "Copilot request failed.");
     } finally {
       setBusy(false);
@@ -131,17 +152,25 @@ export function CopilotPage() {
           )}
 
           <div className="row-actions" aria-label="Suggested prompts">
-            {QUICK_PROMPTS.map((q) => (
-              <button
-                key={q}
-                type="button"
-                className="prompt-chip"
-                disabled={busy}
-                onClick={() => sendPrompt(q)}
-              >
-                {q}
-              </button>
-            ))}
+            {QUICK_PROMPTS.map((q) => {
+              const disabledForViewer = q.mutating && !canApprove;
+              return (
+                <button
+                  key={q.text}
+                  type="button"
+                  className="prompt-chip"
+                  disabled={busy || disabledForViewer}
+                  title={
+                    disabledForViewer
+                      ? "Member or owner role required to propose actions"
+                      : undefined
+                  }
+                  onClick={() => sendPrompt(q.text)}
+                >
+                  {q.text}
+                </button>
+              );
+            })}
           </div>
 
           <div className="copilot-thread" aria-live="polite">
@@ -169,7 +198,11 @@ export function CopilotPage() {
                     {m.role === "assistant" && m.modelUsed && (
                       <span className="mono">
                         · {m.fallbackMode ? "deterministic-fallback" : m.modelUsed}
+                        {m.cached ? " · cached" : ""}
                       </span>
+                    )}
+                    {m.role === "assistant" && m.toolsExecuted && m.toolsExecuted.length > 0 && (
+                      <span className="mono">· tools: {m.toolsExecuted.join(", ")}</span>
                     )}
                   </div>
                   <div>{m.content}</div>
@@ -250,7 +283,10 @@ export function CopilotPage() {
                     <code>{p.tool_name}</code>
                     <span className="tabular">{formatDateTime(p.created_at)}</span>
                   </div>
-                  {p.status === "pending" && canApprove && (
+                  {p.status === "failed" && typeof p.execution_result?.error === "string" && (
+                    <div className="sync-error-note">{p.execution_result.error}</div>
+                  )}
+                  {p.status === "pending" && canDecideProposal(p) && (
                     <div className="row-actions" style={{ paddingTop: 4 }}>
                       <button
                         type="button"
@@ -269,6 +305,9 @@ export function CopilotPage() {
                         Reject
                       </button>
                     </div>
+                  )}
+                  {p.status === "pending" && canApprove && !canDecideProposal(p) && (
+                    <div className="form-hint">Owner permission required to approve or reject.</div>
                   )}
                 </div>
               );

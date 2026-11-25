@@ -29,7 +29,7 @@ from app.models.membership import Membership, MembershipRole
 from app.models.organization import Organization
 from app.models.user import User
 
-TEST_JWT_SECRET = "unit-test-only"
+TEST_JWT_SECRET = "unit-test-only-jwt-secret-key-minimum-32-bytes"
 
 
 @pytest.fixture(autouse=True)
@@ -388,3 +388,35 @@ class TestCopilotChatAndApprovals:
         )
         assert rej_resp.status_code == 200
         assert rej_resp.json()["status"] == "rejected"
+
+    def test_fallback_disconnect_proposal_enforces_owner_role(self, ai_env):
+        org, _, owner_tok = ai_env.make_org_user(MembershipRole.OWNER.value)
+        _, member_tok = ai_env.add_member(org, MembershipRole.MEMBER.value)
+        h_owner = {"Authorization": f"Bearer {owner_tok}"}
+        h_member = {"Authorization": f"Bearer {member_tok}"}
+
+        ai_env.client.post(
+            f"/orgs/{org.id}/integrations",
+            json={"provider": "fake", "credentials": {}},
+            headers=h_owner,
+        )
+
+        member_resp = ai_env.client.post(
+            f"/orgs/{org.id}/copilot/chat",
+            json={"message": "Disconnect fake integration"},
+            headers=h_member,
+        )
+        assert member_resp.status_code == 200
+        assert member_resp.json()["pending_proposals"] == []
+        assert "Permission denied" in member_resp.json()["reply"]
+
+        owner_resp = ai_env.client.post(
+            f"/orgs/{org.id}/copilot/chat",
+            json={"message": "Disconnect fake integration"},
+            headers=h_owner,
+        )
+        assert owner_resp.status_code == 200
+        proposals = owner_resp.json()["pending_proposals"]
+        assert len(proposals) == 1
+        assert proposals[0]["tool_name"] == "disconnect_integration"
+        assert proposals[0]["status"] == ProposalStatus.PENDING.value

@@ -109,6 +109,7 @@ export function DashboardPage({
   const [points, setPoints] = useState<MetricsTimeseriesPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (!token || !activeOrg) return;
@@ -136,7 +137,7 @@ export function DashboardPage({
     return () => {
       cancelled = true;
     };
-  }, [token, activeOrg, windowDays, logout]);
+  }, [token, activeOrg, windowDays, reloadTick, logout]);
 
   if (!activeOrg) {
     return (
@@ -148,16 +149,34 @@ export function DashboardPage({
 
   if (loading) {
     return (
-      <div className="panel panel-pad" style={{ color: "var(--text-secondary)" }}>
-        Loading SaaS and engineering metrics...
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div className="kpi-rail" aria-label="Loading metrics">
+          {[0, 1, 2, 3].map((idx) => (
+            <div key={idx} className="kpi-cell" style={{ cursor: "default" }}>
+              <div className="skeleton-line" style={{ width: "48%" }} />
+              <div className="skeleton-line" style={{ width: "68%", height: 26, margin: "6px 0" }} />
+              <div className="skeleton-line" style={{ width: "80%" }} />
+            </div>
+          ))}
+        </div>
+        <div className="panel panel-pad" style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>
+          Loading SaaS and engineering metrics...
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="alert alert-err" role="alert">
-        {error}
+      <div className="alert alert-err" role="alert" style={{ alignItems: "center" }}>
+        <span>{error}</span>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={() => setReloadTick((t) => t + 1)}
+        >
+          Retry
+        </button>
       </div>
     );
   }

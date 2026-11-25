@@ -25,9 +25,19 @@ export function IntegrationsPage() {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const isOwner = activeOrg?.role === "owner";
   const canOperate = activeOrg?.role === "owner" || activeOrg?.role === "member";
+
+  useEffect(() => {
+    setStatusMsg(null);
+    setErrorMsg(null);
+    setConfirmDeleteId(null);
+    setKeyId("");
+    setSecretOrToken("");
+  }, [activeOrg?.organization_id]);
 
   const refresh = useCallback(async () => {
     if (!token || !activeOrg) return;
@@ -87,6 +97,7 @@ export function IntegrationsPage() {
   async function handleSync(integrationId: string) {
     if (!token || !activeOrg) return;
     setBusy(true);
+    setSyncingId(integrationId);
     setErrorMsg(null);
     setStatusMsg(null);
     try {
@@ -104,6 +115,7 @@ export function IntegrationsPage() {
     } catch (err) {
       setErrorMsg(err instanceof ApiError ? err.message : "Sync failed.");
     } finally {
+      setSyncingId(null);
       setBusy(false);
     }
   }
@@ -114,6 +126,7 @@ export function IntegrationsPage() {
     setErrorMsg(null);
     try {
       await apiClient.deleteIntegration(activeOrg.organization_id, integrationId, token, logout);
+      setConfirmDeleteId(null);
       setStatusMsg("Integration removed.");
       await refresh();
     } catch (err) {
@@ -432,14 +445,34 @@ export function IntegrationsPage() {
                             onClick={() => handleSync(item.id)}
                           >
                             <RefreshIcon size={12} />
-                            Sync Now
+                            {syncingId === item.id ? "Syncing..." : "Sync Now"}
                           </button>
-                          {isOwner && (
+                          {isOwner && confirmDeleteId === item.id && (
+                            <>
+                              <button
+                                type="button"
+                                className="btn btn-danger btn-sm"
+                                disabled={busy}
+                                onClick={() => handleDelete(item.id)}
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                disabled={busy}
+                                onClick={() => setConfirmDeleteId(null)}
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          )}
+                          {isOwner && confirmDeleteId !== item.id && (
                             <button
                               type="button"
                               className="btn btn-danger btn-sm"
                               disabled={busy}
-                              onClick={() => handleDelete(item.id)}
+                              onClick={() => setConfirmDeleteId(item.id)}
                             >
                               Remove
                             </button>
@@ -482,7 +515,7 @@ export function IntegrationsPage() {
                   </tr>
                 ) : (
                   syncRuns.map((run) => (
-                    <tr key={run.id} title={run.error_message || undefined}>
+                    <tr key={run.id}>
                       <td>
                         <span
                           className={`badge ${
@@ -504,6 +537,9 @@ export function IntegrationsPage() {
                           />
                           {run.status}
                         </span>
+                        {run.status === "failed" && run.error_message && (
+                          <div className="sync-error-note">{run.error_message}</div>
+                        )}
                       </td>
                       <td className="num-col">{run.events_received}</td>
                       <td className="num-col" style={{ color: "var(--accent-text)", fontWeight: 500 }}>

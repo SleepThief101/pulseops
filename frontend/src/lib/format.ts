@@ -1,10 +1,14 @@
 export function formatCurrencyCents(cents: number, currency = "USD"): string {
   const dollars = cents / 100;
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 2,
-  }).format(dollars);
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency || "USD",
+      maximumFractionDigits: 2,
+    }).format(dollars);
+  } catch {
+    return `${currency ? `${currency} ` : "$"}${dollars.toFixed(2)}`;
+  }
 }
 
 export function formatShortDate(isoDate: string): string {

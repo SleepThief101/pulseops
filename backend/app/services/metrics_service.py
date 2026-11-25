@@ -91,30 +91,28 @@ def compute_metrics_summary(
                 issue_cycle_times.append(float(payload["cycle_time_hours"]))
 
     # Compute current open issues across all org events by tracking repo+number state
-    all_issue_events = list(
-        db.scalars(
-            select(Event)
-            .where(
-                Event.organization_id == organization_id,
-                Event.event_type.in_(["issue.opened", "issue.closed"]),
-            )
-            .order_by(Event.occurred_at.asc())
-        ).all()
-    )
+    all_issue_events = db.execute(
+        select(Event.event_type, Event.source, Event.payload)
+        .where(
+            Event.organization_id == organization_id,
+            Event.event_type.in_(["issue.opened", "issue.closed"]),
+        )
+        .order_by(Event.occurred_at.asc())
+    ).all()
     open_issue_keys: set[str] = set()
     unkeyed_open_balance = 0
-    for ievt in all_issue_events:
-        p = ievt.payload if isinstance(ievt.payload, dict) else {}
+    for evt_type, evt_source, raw_payload in all_issue_events:
+        p = raw_payload if isinstance(raw_payload, dict) else {}
         num = p.get("number")
-        repo = p.get("repo") or ievt.source
+        repo = p.get("repo") or evt_source
         if num is not None:
             key = f"{repo}#{num}"
-            if ievt.event_type == "issue.opened":
+            if evt_type == "issue.opened":
                 open_issue_keys.add(key)
             else:
                 open_issue_keys.discard(key)
         else:
-            if ievt.event_type == "issue.opened":
+            if evt_type == "issue.opened":
                 unkeyed_open_balance += 1
             else:
                 unkeyed_open_balance = max(unkeyed_open_balance - 1, 0)

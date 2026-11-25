@@ -36,7 +36,7 @@ from app.models.membership import Membership, MembershipRole
 from app.models.organization import Organization
 from app.models.user import User
 
-TEST_JWT_SECRET = "unit-test-only"
+TEST_JWT_SECRET = "unit-test-only-jwt-secret-key-minimum-32-bytes"
 
 
 @pytest.fixture(autouse=True)

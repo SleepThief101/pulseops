@@ -12,8 +12,15 @@ export function TeamPage() {
   const [role, setRole] = useState<Role>("member");
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const isOwner = activeOrg?.role === "owner";
+
+  useEffect(() => {
+    setEmail("");
+    setStatus(null);
+    setError(null);
+  }, [activeOrg?.organization_id]);
 
   const loadMembers = useCallback(async () => {
     if (!token || !activeOrg) return;
@@ -32,6 +39,7 @@ export function TeamPage() {
     if (!token || !activeOrg) return;
     setError(null);
     setStatus(null);
+    setSubmitting(true);
     try {
       await apiClient.addMember(activeOrg.organization_id, email.trim(), role, token, logout);
       setStatus(`Added ${email.trim()} as ${role}.`);
@@ -39,6 +47,8 @@ export function TeamPage() {
       await loadMembers();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to add member.");
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -158,8 +168,8 @@ export function TeamPage() {
                   <option value="owner">Owner — Credentials, members, audit logs</option>
                 </select>
               </div>
-              <button className="btn" type="submit" disabled={!isOwner}>
-                Add Member
+              <button className="btn" type="submit" disabled={!isOwner || submitting}>
+                {submitting ? "Adding..." : "Add Member"}
               </button>
             </form>
           </div>

@@ -146,6 +146,7 @@ export interface CopilotChatResponse {
   reply: string;
   model_used: string;
   fallback_mode: boolean;
+  cached?: boolean;
   tool_calls_executed: Array<{
     tool_name: string;
     result: Record<string, unknown>;

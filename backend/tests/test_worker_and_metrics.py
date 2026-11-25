@@ -179,6 +179,34 @@ class TestWorkerAndSyncRuns:
         assert len(runs) == 1
         assert runs[0]["status"] == SyncRunStatus.PENDING.value
 
+    def test_background_sync_queue_failure_marks_run_failed_and_returns_503(
+        self, wm_env, monkeypatch
+    ):
+        org, _, owner_tok = wm_env.make_org_owner()
+        headers = {"Authorization": f"Bearer {owner_tok}"}
+        integ = wm_env.client.post(
+            f"/orgs/{org.id}/integrations",
+            json={"provider": "fake", "credentials": {}},
+            headers=headers,
+        ).json()
+
+        async def broken_enqueue(**_kwargs):
+            raise RuntimeError("Redis queue unavailable")
+
+        monkeypatch.setattr("app.routers.integrations.enqueue_sync_job", broken_enqueue)
+
+        resp = wm_env.client.post(
+            f"/orgs/{org.id}/integrations/{integ['id']}/sync?background=true",
+            headers=headers,
+        )
+        assert resp.status_code == 503
+        assert "Background worker queue unavailable" in resp.json()["detail"]
+
+        runs = wm_env.client.get(f"/orgs/{org.id}/sync-runs", headers=headers).json()
+        assert len(runs) == 1
+        assert runs[0]["status"] == SyncRunStatus.FAILED.value
+        assert "Failed to enqueue" in (runs[0]["error_message"] or "")
+
     @pytest.mark.anyio
     async def test_sync_integration_job_executes_and_completes_run(
         self, wm_env, monkeypatch

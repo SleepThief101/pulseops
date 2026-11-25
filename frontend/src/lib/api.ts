@@ -41,24 +41,55 @@ export const API_BASE_URL = resolveApiBaseUrl(
   typeof import.meta !== "undefined" ? import.meta.env : undefined
 );
 
+const DEFAULT_TIMEOUT_MS = 45_000;
+const TRANSIENT_HTTP_STATUSES = new Set([502, 503, 504]);
+
 export class ApiError extends Error {
   status: number;
   requestId: string | null;
+  isTransient: boolean;
 
-  constructor(message: string, status: number, requestId: string | null = null) {
+  constructor(
+    message: string,
+    status: number,
+    requestId: string | null = null,
+    isTransient = false
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.requestId = requestId;
+    this.isTransient = isTransient;
   }
 }
 
-async function request<T>(
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs = DEFAULT_TIMEOUT_MS
+): Promise<Response> {
+  if (typeof AbortController === "undefined" || options.signal) {
+    return fetch(url, options);
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function performRequest(
   path: string,
   options: RequestInit = {},
   token: string | null = null,
   onUnauthorized?: () => void
-): Promise<T> {
+): Promise<Response> {
   const headers = new Headers(options.headers || {});
   if (!headers.has("Content-Type") && options.body && typeof options.body === "string") {
     headers.set("Content-Type", "application/json");
@@ -67,37 +98,86 @@ async function request<T>(
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers,
-  });
+  const method = (options.method || "GET").toUpperCase();
+  const canRetryGet = method === "GET";
+  const maxAttempts = canRetryGet ? 2 : 1;
 
-  const requestId = res.headers.get("X-Request-ID");
-
-  if (!res.ok) {
-    if (res.status === 401 && onUnauthorized) {
-      onUnauthorized();
-    }
-    let detail = `Request failed (${res.status})`;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let res: Response;
     try {
-      const errBody = await res.json();
-      if (errBody && typeof errBody.detail === "string") {
-        detail = errBody.detail;
+      res = await fetchWithTimeout(`${API_BASE_URL}${path}`, {
+        ...options,
+        headers,
+      });
+    } catch (err) {
+      const timedOut = err instanceof Error && err.name === "AbortError";
+      if (attempt < maxAttempts) {
+        await sleep(1500);
+        continue;
       }
-    } catch {
-      // ignore non-JSON error body
+      throw new ApiError(
+        timedOut
+          ? "Request timed out. The API server may be waking from free-tier sleep; please retry."
+          : "Unable to reach the PulseOps API. If using free-tier hosting, it may be waking up.",
+        0,
+        null,
+        true
+      );
     }
-    throw new ApiError(detail, res.status, requestId);
+
+    const requestId = res.headers.get("X-Request-ID");
+
+    if (!res.ok) {
+      if (res.status === 401 && onUnauthorized) {
+        onUnauthorized();
+      }
+      if (attempt < maxAttempts && TRANSIENT_HTTP_STATUSES.has(res.status)) {
+        await sleep(1500);
+        continue;
+      }
+      let detail = `Request failed (${res.status})`;
+      try {
+        const errBody = await res.json();
+        if (errBody && typeof errBody.detail === "string") {
+          detail = errBody.detail;
+        }
+      } catch {
+        // ignore non-JSON error body
+      }
+      throw new ApiError(
+        detail,
+        res.status,
+        requestId,
+        TRANSIENT_HTTP_STATUSES.has(res.status)
+      );
+    }
+
+    return res;
   }
 
+  throw new ApiError("Request failed unexpectedly.", 0, null, true);
+}
+
+async function request<T>(
+  path: string,
+  options: RequestInit = {},
+  token: string | null = null,
+  onUnauthorized?: () => void
+): Promise<T> {
+  const res = await performRequest(path, options, token, onUnauthorized);
   if (res.status === 204) {
     return undefined as T;
   }
-
   return (await res.json()) as T;
 }
 
 export const apiClient = {
+  warmUpHealth() {
+    fetchWithTimeout(`${API_BASE_URL}/health`, { method: "GET" }, 10_000).catch(() => {
+      // silent non-blocking cold-start wake ping
+    });
+  },
+
   register(email: string, password: string, organizationName: string) {
     return request<RegisterResponse>("/auth/register", {
       method: "POST",
@@ -152,9 +232,14 @@ export const apiClient = {
     token: string,
     source?: string,
     eventType?: string,
-    onUnauthorized?: () => void
+    onUnauthorized?: () => void,
+    limit = 50,
+    offset = 0
   ) {
-    const params = new URLSearchParams({ limit: "100" });
+    const params = new URLSearchParams({
+      limit: String(limit),
+      offset: String(offset),
+    });
     if (source) params.set("source", source);
     if (eventType) params.set("event_type", eventType);
     return request<EventItem[]>(
@@ -163,6 +248,31 @@ export const apiClient = {
       token,
       onUnauthorized
     );
+  },
+
+  async exportEventsCsv(
+    orgId: string,
+    token: string,
+    source?: string,
+    eventType?: string,
+    onUnauthorized?: () => void
+  ): Promise<{ filename: string; csvText: string }> {
+    const params = new URLSearchParams({ limit: "1000", days: "365" });
+    if (source) params.set("source", source);
+    if (eventType) params.set("event_type", eventType);
+    const res = await performRequest(
+      `/orgs/${orgId}/events/export?${params.toString()}`,
+      {},
+      token,
+      onUnauthorized
+    );
+    const csvText = await res.text();
+    const disp = res.headers.get("Content-Disposition") || "";
+    const match = disp.match(/filename="([^"]+)"/i);
+    return {
+      filename: match ? match[1] : `pulseops-events-${orgId}.csv`,
+      csvText,
+    };
   },
 
   listIntegrations(orgId: string, token: string, onUnauthorized?: () => void) {

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { PulseOpsLogo } from "../components/PulseOpsLogo";
 import { useAuth } from "../context/AuthContext";
 import { ApiError, apiClient } from "../lib/api";
@@ -11,11 +11,18 @@ export function AuthPage() {
   const [orgName, setOrgName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [slowWakeNotice, setSlowWakeNotice] = useState(false);
+
+  useEffect(() => {
+    apiClient.warmUpHealth();
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
+    setSlowWakeNotice(false);
+    const wakeTimer = setTimeout(() => setSlowWakeNotice(true), 3500);
     try {
       if (mode === "register") {
         await apiClient.register(email.trim(), password, orgName.trim());
@@ -29,6 +36,8 @@ export function AuthPage() {
         setError("Authentication failed. Check API connectivity.");
       }
     } finally {
+      clearTimeout(wakeTimer);
+      setSlowWakeNotice(false);
       setSubmitting(false);
     }
   }
@@ -79,7 +88,7 @@ export function AuthPage() {
         </div>
 
         <div className="mono" style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>
-          PulseOps v0.1 · Argon2id + HS256 JWT · Fernet Encrypted Credentials
+          PulseOps v1.0 · Argon2id + HS256 JWT · Fernet Encrypted Credentials
         </div>
       </aside>
 
@@ -136,6 +145,14 @@ export function AuthPage() {
           {error && (
             <div className="alert alert-err" style={{ marginBottom: 14 }} role="alert">
               <span>{error}</span>
+            </div>
+          )}
+
+          {slowWakeNotice && !error && (
+            <div className="alert alert-warn" style={{ marginBottom: 14 }} role="status">
+              <span>
+                Connecting to PulseOps API — Render free-tier services may take 30–50s on cold start.
+              </span>
             </div>
           )}
 

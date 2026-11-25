@@ -38,8 +38,14 @@ class TestDatabaseUrlNormalization:
 class TestProductionSettingsValidation:
     """Verify fail-closed production validation and helper properties."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_doc_env(self, monkeypatch):
+        monkeypatch.delenv("ENABLE_DOCS", raising=False)
+        monkeypatch.delenv("ENVIRONMENT", raising=False)
+
     def _base_kwargs(self) -> dict:
         return {
+            "_env_file": None,
             "database_url": "postgresql+psycopg://u:p@db:5432/app",
             "redis_url": "rediss://default:p@upstash.io:6379",
             "environment": "production",
@@ -57,6 +63,7 @@ class TestProductionSettingsValidation:
 
     def test_docs_enabled_defaults(self):
         dev = Settings(
+            _env_file=None,
             database_url="postgresql+psycopg://u:p@db:5432/app",
             redis_url="redis://redis:6379/0",
             environment="development",

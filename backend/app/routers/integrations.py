@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 import uuid
 
@@ -14,8 +15,10 @@ from app.connectors import (
 )
 from app.core.auth import get_current_membership, require_role
 from app.core.rate_limit import rate_limit_org_write
+from app.core.security import EncryptionError
 from app.db.session import get_db
 from app.models.membership import Membership, MembershipRole
+from app.models.sync_run import SyncRunStatus
 from app.schemas.event import EventIngestResult
 from app.schemas.integration import (
     GitHubOAuthCallbackRequest,
@@ -63,7 +66,7 @@ def connect_integration(
         ) from exc
     except ConnectorAuthError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
 
@@ -161,12 +164,22 @@ async def trigger_integration_sync(
                 organization_id=org_id,
                 integration_id=integration_id,
             )
-            await enqueue_sync_job(
-                organization_id=org_id,
-                integration_id=integration_id,
-                sync_run_id=run.id,
-                full_sync=full_sync,
-            )
+            try:
+                await enqueue_sync_job(
+                    organization_id=org_id,
+                    integration_id=integration_id,
+                    sync_run_id=run.id,
+                    full_sync=full_sync,
+                )
+            except Exception as exc:
+                run.status = SyncRunStatus.FAILED.value
+                run.error_message = f"Failed to enqueue background sync job: {exc}"
+                run.finished_at = datetime.now(timezone.utc)
+                db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Background worker queue unavailable; retry without background=true for synchronous sync.",
+                ) from exc
             integ = integration_service.get_integration(
                 db, organization_id=org_id, integration_id=integration_id
             )
@@ -224,6 +237,11 @@ async def trigger_integration_sync(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
+        ) from exc
+    except EncryptionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Stored integration credentials could not be decrypted.",
         ) from exc
     except (ConnectorAuthError, ConnectorError) as exc:
         raise HTTPException(
@@ -312,14 +330,14 @@ async def import_csv_events(
             body_json: Any = await request.json()
         except Exception as exc:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Malformed JSON body.",
             ) from exc
         if not isinstance(body_json, dict) or not isinstance(
             body_json.get("csv_text"), str
         ):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="JSON body must contain string field 'csv_text'.",
             )
         csv_text = body_json["csv_text"]
@@ -328,7 +346,7 @@ async def import_csv_events(
             csv_text = raw_bytes.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="CSV payload must be UTF-8 encoded.",
             ) from exc
 
@@ -336,7 +354,7 @@ async def import_csv_events(
         events = CsvConnector().parse_csv_text(csv_text)
     except ConnectorError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
 

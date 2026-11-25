@@ -37,7 +37,7 @@ from app.models.user import User
 from app.schemas.event import NormalizedEvent
 from app.services import copilot_service, demo_service, event_service
 
-TEST_JWT_SECRET = "unit-test-only"
+TEST_JWT_SECRET = "unit-test-only-jwt-secret-key-minimum-32-bytes"
 
 
 @pytest.fixture(autouse=True)
