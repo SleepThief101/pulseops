@@ -134,6 +134,7 @@ def pulseops_metrics_summary(
 def pulseops_recent_events(
     organization_id: str,
     source: str | None = None,
+    event_type: str | None = None,
     limit: int = 20,
     api_key: str | None = None,
 ) -> dict[str, Any]:
@@ -149,6 +150,8 @@ def pulseops_recent_events(
         raw_args: dict[str, Any] = {"limit": limit}
         if source is not None:
             raw_args["source"] = source
+        if event_type is not None:
+            raw_args["event_type"] = event_type
         return execute_tool_safely(
             db,
             tool=tool,

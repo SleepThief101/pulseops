@@ -201,6 +201,7 @@ def run_copilot_chat(
         return cached
 
     if client.is_configured:
+        savepoint = db.begin_nested()
         try:
             reply = _run_deepseek_tool_loop(
                 db=db,
@@ -212,6 +213,7 @@ def run_copilot_chat(
                 executed_tools=executed_tools,
                 created_proposals=created_proposals,
             )
+            savepoint.commit()
             db.commit()
             for p in created_proposals:
                 db.refresh(p)
@@ -232,9 +234,17 @@ def run_copilot_chat(
                 response=response,
             )
             return response
-        except DeepSeekError:
-            # Fall back transparently to local deterministic mode
-            pass
+        except DeepSeekError as exc:
+            # Roll back only the DeepSeek tool-loop savepoint and fall back transparently
+            if savepoint.is_active:
+                savepoint.rollback()
+            executed_tools.clear()
+            created_proposals.clear()
+            logger.warning(
+                "DeepSeek chat unavailable, using deterministic fallback: %s",
+                exc,
+                extra={"org_id": str(organization_id)},
+            )
 
     reply = _run_deterministic_fallback(
         db=db,
@@ -306,6 +316,7 @@ def prepare_copilot_stream(
     created_proposals: list[ActionProposal] = []
 
     if client.is_configured:
+        savepoint = db.begin_nested()
         try:
             messages, executed_all = _execute_deepseek_tool_rounds(
                 db=db,
@@ -318,6 +329,7 @@ def prepare_copilot_stream(
                 created_proposals=created_proposals,
             )
             if executed_all is not None:
+                savepoint.commit()
                 db.commit()
                 for p in created_proposals:
                     db.refresh(p)
@@ -340,6 +352,7 @@ def prepare_copilot_stream(
                 )
                 return _yield_chunked_sse(resp)
 
+            savepoint.commit()
             db.commit()
             for p in created_proposals:
                 db.refresh(p)
@@ -377,8 +390,16 @@ def prepare_copilot_stream(
                 yield f"data: {json.dumps({'type': 'done', 'response': resp.model_dump(mode='json')})}\n\n"
 
             return _stream_live()
-        except DeepSeekError:
-            pass
+        except DeepSeekError as exc:
+            if savepoint.is_active:
+                savepoint.rollback()
+            executed_tools.clear()
+            created_proposals.clear()
+            logger.warning(
+                "DeepSeek stream unavailable, using deterministic fallback: %s",
+                exc,
+                extra={"org_id": str(organization_id)},
+            )
 
     resp = run_copilot_chat(
         db,
@@ -414,7 +435,10 @@ def _execute_deepseek_tool_rounds(
             "role": "system",
             "content": (
                 "You are PulseOps Copilot, an AI operations assistant for SaaS teams. "
-                "Use tools strictly for factual metrics and integrations. "
+                "Use only registered tools for factual metrics, failed payments, events, "
+                "and integration status. Never invent operational metrics or customer data. "
+                "Explicitly distinguish unavailable/missing data (e.g. null cycle time, "
+                "zero events in window, or no integrations) from genuine zero values. "
                 "Mutating actions always require human approval."
             ),
         },
@@ -425,9 +449,16 @@ def _execute_deepseek_tool_rounds(
 
     for _ in range(max_rounds):
         raw_resp = client.chat_completions(messages=messages, tools=tools_schema)
-        choice = (raw_resp.get("choices") or [{}])[0]
-        assistant_msg = choice.get("message") or {}
+        choices = raw_resp.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            raise DeepSeekError("DeepSeek API returned malformed choices payload.")
+        choice = choices[0]
+        assistant_msg = choice.get("message")
+        if not isinstance(assistant_msg, dict):
+            raise DeepSeekError("DeepSeek API returned malformed assistant message.")
         tool_calls = assistant_msg.get("tool_calls") or []
+        if not isinstance(tool_calls, list):
+            raise DeepSeekError("DeepSeek API returned malformed tool_calls list.")
 
         if not tool_calls:
             return messages, str(
@@ -587,7 +618,12 @@ def _run_deepseek_tool_loop(
         return direct_reply
 
     final_resp = client.chat_completions(messages=messages)
-    final_msg = ((final_resp.get("choices") or [{}])[0]).get("message") or {}
+    choices = final_resp.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise DeepSeekError("DeepSeek API returned malformed final choices payload.")
+    final_msg = choices[0].get("message")
+    if not isinstance(final_msg, dict):
+        raise DeepSeekError("DeepSeek API returned malformed final assistant message.")
     return str(final_msg.get("content") or "Completed analysis.")
 
 
@@ -685,6 +721,19 @@ def _run_deterministic_fallback(
         CopilotToolExecutionRecord(tool_name=integ_tool.name, result=integ_status)
     )
 
+    failed_tool = ai_tool_registry.get("list_recent_events")
+    failed_events_res = execute_tool_safely(
+        db,
+        tool=failed_tool,
+        organization_id=organization_id,
+        caller_role=caller_role,
+        raw_args={"event_type": "payment.failed", "limit": 20},
+        allow_mutating_execution=False,
+    )
+    executed_tools.append(
+        CopilotToolExecutionRecord(tool_name=failed_tool.name, result=failed_events_res)
+    )
+
     # Detect mutating intent ("disconnect" or "sync") -> NEVER auto-execute; propose only for authorized roles!
     if any(kw in lower for kw in ("disconnect", "remove integration", "unlink")):
         return _propose_fallback_integration_action(
@@ -710,17 +759,36 @@ def _run_deterministic_fallback(
             created_proposals=created_proposals,
         )
 
+    integrations_list = integ_status["integrations"]
+    providers = [f"{i['provider']} ({i['status']})" for i in integrations_list]
+    providers_str = ", ".join(providers) if providers else "none connected"
+
+    failed_list = failed_events_res.get("events") or []
+    failed_total_cents = sum(int(e.get("amount_cents") or 0) for e in failed_list)
+    failed_str = (
+        f"{len(failed_list)} failed (${failed_total_cents / 100.0:,.2f})"
+        if failed_list
+        else "0 recorded"
+    )
+
+    if summary["total_events_in_window"] == 0:
+        return (
+            "PulseOps Operational Briefing (Last 30 days):\n"
+            "- Operational Data: No events ingested in the last 30 days (unavailable rather than zero activity).\n"
+            f"- Connected Integrations: {providers_str}\n"
+            "- Next Step: Connect Razorpay/GitHub or import a CSV to populate metrics."
+        )
+
     mrr_dollars = summary["mrr_cents"] / 100.0
     arr_dollars = summary["arr_cents"] / 100.0
     cycle = summary["avg_issue_cycle_time_hours"]
-    cycle_str = f"{cycle}h" if cycle is not None else "N/A"
-    providers = [i["provider"] for i in integ_status["integrations"]]
-    providers_str = ", ".join(providers) if providers else "none"
+    cycle_str = f"{cycle}h" if cycle is not None else "unavailable (no closed issues)"
 
     return (
         f"PulseOps Operational Briefing (Last 30 days):\n"
         f"- Net MRR: ${mrr_dollars:,.2f} (ARR: ${arr_dollars:,.2f})\n"
         f"- Churn Rate: {summary['churn_rate_pct']}% ({summary['churned_subscriptions_count']} churned)\n"
+        f"- Failed Payments: {failed_str}\n"
         f"- GitHub PRs: {summary['prs_merged']} merged / {summary['prs_opened']} opened\n"
         f"- Open Issues: {summary['open_issues_count']} open ({summary['issues_closed_count']} closed, avg cycle time: {cycle_str})\n"
         f"- Connected Integrations: {providers_str}"

@@ -150,7 +150,9 @@ class RazorpayConnector(BaseConnector):
             if since_utc is not None:
                 events = [e for e in events if e.occurred_at >= since_utc]
             return events
-        except (httpx.HTTPError, ConnectorError) as exc:
+        except ConnectorAuthError:
+            raise
+        except (httpx.HTTPError, ConnectorError, ValueError) as exc:
             if settings.razorpay_mock_fallback and credentials.get(
                 "allow_mock_fallback", False
             ):
@@ -221,10 +223,14 @@ class RazorpayConnector(BaseConnector):
                         params=params,
                     )
 
-            if resp.status_code == 401:
+            if resp.status_code in (401, 403):
                 raise ConnectorAuthError("Razorpay API rejected Test Mode credentials.")
+            if resp.status_code == 429:
+                raise ConnectorError("Razorpay API rate limit exceeded; retry shortly.")
             resp.raise_for_status()
             data = resp.json()
+            if not isinstance(data, dict):
+                raise ConnectorError("Unexpected non-object response from Razorpay API.")
             items = list(data.get("items") or [])
             collected.extend(items)
             if len(items) < page_size:
@@ -240,7 +246,7 @@ class RazorpayConnector(BaseConnector):
             event_name = str(raw_event["event"])
             payload_obj = raw_event["payload"]
             entity: dict[str, Any] = {}
-            for key in ("subscription", "payment", "refund"):
+            for key in ("subscription", "refund", "payment"):
                 if key in payload_obj and isinstance(payload_obj[key], dict):
                     entity = payload_obj[key].get("entity") or payload_obj[key]
                     break

@@ -50,6 +50,7 @@ class GetMetricsTimeseriesArgs(BaseModel):
 class ListRecentEventsArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source: str | None = Field(default=None, min_length=1, max_length=50)
+    event_type: str | None = Field(default=None, min_length=1, max_length=100)
     limit: int = Field(default=20, ge=1, le=50)
 
 
@@ -189,6 +190,7 @@ def _tool_list_recent_events(
     *,
     organization_id: uuid.UUID,
     source: str | None = None,
+    event_type: str | None = None,
     limit: int = 20,
 ) -> dict[str, Any]:
     limit_clamped = max(1, min(int(limit), 50))
@@ -196,6 +198,7 @@ def _tool_list_recent_events(
         db,
         organization_id=organization_id,
         source=source,
+        event_type=event_type,
         limit=limit_clamped,
     )
     return {
@@ -349,7 +352,8 @@ ai_tool_registry.register(
             "type": "object",
             "additionalProperties": False,
             "properties": {
-                "source": {"type": "string", "description": "Optional source filter."},
+                "source": {"type": "string", "description": "Optional source filter (razorpay, github, csv, fake)."},
+                "event_type": {"type": "string", "description": "Optional event_type filter (e.g. payment.failed, pr.merged)."},
                 "limit": {"type": "integer", "default": 20},
             },
         },

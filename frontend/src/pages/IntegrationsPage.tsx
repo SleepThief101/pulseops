@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { RefreshIcon, UploadIcon } from "../components/Icons";
 import { useAuth } from "../context/AuthContext";
-import { ApiError, apiClient } from "../lib/api";
+import { API_BASE_URL, ApiError, apiClient } from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import type { IntegrationItem, SyncRunItem } from "../types/api";
 
@@ -20,6 +20,7 @@ export function IntegrationsPage() {
   const [repo, setRepo] = useState("pulseops/app");
   const [keyId, setKeyId] = useState("");
   const [secretOrToken, setSecretOrToken] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
   const [csvText, setCsvText] = useState(SAMPLE_CSV);
   const [csvFileName, setCsvFileName] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
@@ -37,6 +38,7 @@ export function IntegrationsPage() {
     setConfirmDeleteId(null);
     setKeyId("");
     setSecretOrToken("");
+    setWebhookSecret("");
   }, [activeOrg?.organization_id]);
 
   const refresh = useCallback(async () => {
@@ -74,6 +76,9 @@ export function IntegrationsPage() {
           ? { mode: "mock", repo: repo.trim() }
           : { access_token: secretOrToken.trim(), repo: repo.trim() };
     }
+    if ((provider === "razorpay" || provider === "github") && webhookSecret.trim()) {
+      credentials.webhook_secret = webhookSecret.trim();
+    }
 
     try {
       await apiClient.connectIntegration(
@@ -86,6 +91,7 @@ export function IntegrationsPage() {
       setStatusMsg(`Connected ${provider} integration.`);
       setKeyId("");
       setSecretOrToken("");
+      setWebhookSecret("");
       await refresh();
     } catch (err) {
       setErrorMsg(err instanceof ApiError ? err.message : "Failed to connect integration.");
@@ -308,6 +314,31 @@ export function IntegrationsPage() {
                     onChange={(e) => setSecretOrToken(e.target.value)}
                     required
                   />
+                </div>
+              )}
+
+              {(provider === "razorpay" || provider === "github") && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="whSecret">
+                    Webhook Secret (optional)
+                  </label>
+                  <input
+                    id="whSecret"
+                    className="input"
+                    type="password"
+                    value={webhookSecret}
+                    disabled={!isOwner || busy}
+                    onChange={(e) => setWebhookSecret(e.target.value)}
+                    placeholder="Used to verify inbound HMAC-SHA256 webhooks"
+                  />
+                  {activeOrg && (
+                    <div className="form-hint">
+                      Webhook URL:{" "}
+                      <code>
+                        {API_BASE_URL}/webhooks/{provider}/{activeOrg.organization_id}
+                      </code>
+                    </div>
+                  )}
                 </div>
               )}
 

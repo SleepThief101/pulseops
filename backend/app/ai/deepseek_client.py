@@ -76,10 +76,25 @@ class DeepSeekClient:
             else:
                 with httpx.Client(timeout=20.0) as client:
                     resp = client.post(url, json=payload, headers=headers)
+            if resp.status_code in (401, 403):
+                raise DeepSeekError("DeepSeek authentication failed.")
+            if resp.status_code == 429:
+                raise DeepSeekError("DeepSeek API rate limit exceeded.")
             resp.raise_for_status()
-            return dict(resp.json())
-        except httpx.HTTPError as exc:
-            raise DeepSeekError(f"DeepSeek API request failed: {exc}") from exc
+            data = resp.json()
+            if not isinstance(data, dict):
+                raise DeepSeekError("DeepSeek API returned a non-object response.")
+            return dict(data)
+        except DeepSeekError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise DeepSeekError("DeepSeek API request timed out.") from exc
+        except httpx.HTTPStatusError as exc:
+            raise DeepSeekError(
+                f"DeepSeek API returned HTTP {exc.response.status_code}."
+            ) from exc
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            raise DeepSeekError("DeepSeek API request failed.") from exc
 
     def stream_chat_completions(
         self,
@@ -116,6 +131,10 @@ class DeepSeekClient:
                 with self._http_client.stream(
                     "POST", url, json=payload, headers=headers
                 ) as resp:
+                    if resp.status_code in (401, 403):
+                        raise DeepSeekError("DeepSeek authentication failed.")
+                    if resp.status_code == 429:
+                        raise DeepSeekError("DeepSeek API rate limit exceeded.")
                     resp.raise_for_status()
                     yield from self._iter_sse_deltas(resp)
             else:
@@ -123,10 +142,22 @@ class DeepSeekClient:
                     with client.stream(
                         "POST", url, json=payload, headers=headers
                     ) as resp:
+                        if resp.status_code in (401, 403):
+                            raise DeepSeekError("DeepSeek authentication failed.")
+                        if resp.status_code == 429:
+                            raise DeepSeekError("DeepSeek API rate limit exceeded.")
                         resp.raise_for_status()
                         yield from self._iter_sse_deltas(resp)
-        except httpx.HTTPError as exc:
-            raise DeepSeekError(f"DeepSeek streaming request failed: {exc}") from exc
+        except DeepSeekError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise DeepSeekError("DeepSeek streaming request timed out.") from exc
+        except httpx.HTTPStatusError as exc:
+            raise DeepSeekError(
+                f"DeepSeek streaming API returned HTTP {exc.response.status_code}."
+            ) from exc
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            raise DeepSeekError("DeepSeek streaming request failed.") from exc
 
     @staticmethod
     def _iter_sse_deltas(resp: httpx.Response) -> Iterator[str]:

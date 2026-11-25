@@ -337,6 +337,95 @@ class TestRazorpayConnector:
         )
         assert [r["id"] for r in raw] == ["pay_p1_0", "pay_p1_1", "pay_p2_0"]
 
+    def test_razorpay_failed_payment_refund_envelope_and_error_handling(self):
+        created_ts = int(datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc).timestamp())
+
+        def failed_payment_handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": "pay_fail_01",
+                            "entity": "payment",
+                            "amount": 19900,
+                            "currency": "INR",
+                            "status": "failed",
+                            "email": "failed@startup.io",
+                            "created_at": created_ts,
+                        }
+                    ]
+                },
+            )
+
+        conn_ok = RazorpayConnector(
+            http_client=httpx.Client(transport=httpx.MockTransport(failed_payment_handler))
+        )
+        events = conn_ok.fetch_events({"key_id": "rzp_test_abc", "key_secret": "sec"})
+        assert len(events) == 1
+        assert events[0].event_type == "payment.failed"
+        assert events[0].amount_cents == 19900
+
+        # Refund webhook envelope uses refund entity amount (partial refund)
+        refund_evt = conn_ok.normalize(
+            {
+                "event": "payment.refunded",
+                "created_at": created_ts,
+                "payload": {
+                    "payment": {
+                        "entity": {
+                            "id": "pay_orig_1",
+                            "entity": "payment",
+                            "amount": 10000,
+                            "currency": "USD",
+                            "status": "refunded",
+                        }
+                    },
+                    "refund": {
+                        "entity": {
+                            "id": "rfnd_partial_1",
+                            "entity": "refund",
+                            "amount": 3500,
+                            "currency": "USD",
+                            "status": "processed",
+                            "created_at": created_ts,
+                        }
+                    },
+                },
+            }
+        )
+        assert refund_evt.event_type == "payment.refunded"
+        assert refund_evt.amount_cents == 3500
+
+        # Invalid creds (401), rate limit (429), and timeout map cleanly to ConnectorError subclasses
+        from app.connectors import ConnectorError
+
+        for status_code in (401, 403):
+            bad_conn = RazorpayConnector(
+                http_client=httpx.Client(
+                    transport=httpx.MockTransport(lambda _r, s=status_code: httpx.Response(s))
+                )
+            )
+            with pytest.raises(ConnectorAuthError):
+                bad_conn.fetch_events({"key_id": "rzp_test_bad", "key_secret": "sec"})
+
+        rate_conn = RazorpayConnector(
+            http_client=httpx.Client(
+                transport=httpx.MockTransport(lambda _r: httpx.Response(429))
+            )
+        )
+        with pytest.raises(ConnectorError, match="rate limit"):
+            rate_conn.fetch_events({"key_id": "rzp_test_abc", "key_secret": "sec"})
+
+        def timeout_handler(_r: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("timed out")
+
+        to_conn = RazorpayConnector(
+            http_client=httpx.Client(transport=httpx.MockTransport(timeout_handler))
+        )
+        with pytest.raises(ConnectorError, match="Razorpay API sync failed"):
+            to_conn.fetch_events({"key_id": "rzp_test_abc", "key_secret": "sec"})
+
 
 # ---------------------------------------------------------------------------
 # S14: GitHub Connector & OAuth
@@ -418,6 +507,44 @@ class TestGitHubConnectorAndOAuth:
         )
         assert len(raw) == 1
         assert raw[0]["number"] == 1
+
+    def test_github_error_status_mapping_and_oauth_failure_handling(self):
+        from app.connectors import ConnectorError
+        from app.services import integration_service
+
+        conn_403 = GitHubConnector(
+            http_client=httpx.Client(
+                transport=httpx.MockTransport(lambda _r: httpx.Response(403))
+            )
+        )
+        with pytest.raises(ConnectorAuthError, match="denied access"):
+            conn_403.fetch_events({"access_token": "ghp_bad", "repo": "acme/api"})
+
+        conn_404 = GitHubConnector(
+            http_client=httpx.Client(
+                transport=httpx.MockTransport(lambda _r: httpx.Response(404))
+            )
+        )
+        with pytest.raises(ConnectorError, match="not found"):
+            conn_404.fetch_events({"access_token": "ghp_bad", "repo": "acme/missing"})
+
+        # OAuth code exchange HTTP errors map cleanly to ConnectorAuthError
+        from app.config import settings
+
+        old_cid, old_sec = settings.github_client_id, settings.github_client_secret
+        try:
+            settings.github_client_id = "cid"
+            settings.github_client_secret = "csec"
+            with pytest.raises(ConnectorAuthError):
+                integration_service.exchange_github_oauth_code(
+                    code="bad_code",
+                    http_client=httpx.Client(
+                        transport=httpx.MockTransport(lambda _r: httpx.Response(502))
+                    ),
+                )
+        finally:
+            settings.github_client_id = old_cid
+            settings.github_client_secret = old_sec
 
     def test_github_oauth_url_and_state_isolation(self, int_env, monkeypatch):
         from app.services import integration_service
@@ -610,6 +737,14 @@ class TestInboundWebhooks:
         )
         assert ok1.status_code == 200
         assert ok1.json()["inserted_count"] == 1
+
+        # Webhook update reflects immediately in metrics summary
+        metrics = int_env.client.get(
+            f"/orgs/{org.id}/metrics/summary?days=30",
+            headers={"Authorization": f"Bearer {owner_tok}"},
+        )
+        assert metrics.status_code == 200
+        assert metrics.json()["mrr_cents"] == 9900
 
         # Replay -> idempotent skip
         ok2 = int_env.client.post(

@@ -319,22 +319,27 @@ def exchange_github_oauth_code(
     }
     headers = {"Accept": "application/json"}
 
-    if http_client is not None:
-        resp = http_client.post(
-            "https://github.com/login/oauth/access_token",
-            json=payload,
-            headers=headers,
-        )
-    else:
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.post(
+    try:
+        if http_client is not None:
+            resp = http_client.post(
                 "https://github.com/login/oauth/access_token",
                 json=payload,
                 headers=headers,
             )
+        else:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post(
+                    "https://github.com/login/oauth/access_token",
+                    json=payload,
+                    headers=headers,
+                )
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise ConnectorAuthError("GitHub OAuth code exchange failed.") from exc
 
-    resp.raise_for_status()
-    data = resp.json()
+    if not isinstance(data, dict):
+        raise ConnectorAuthError("GitHub OAuth code exchange returned malformed data.")
     access_token = data.get("access_token")
     if not access_token:
         raise ConnectorAuthError(

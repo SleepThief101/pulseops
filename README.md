@@ -221,6 +221,7 @@ The production `PulseOps Synthetic Demo` workspace is populated with synthetic S
 
 ## Additional Documentation
 
+- **External Integration Setup Guide:** See [`docs/EXTERNAL_INTEGRATION_SETUP.md`](./docs/EXTERNAL_INTEGRATION_SETUP.md) for exact Razorpay Test Mode, DeepSeek API, GitHub PAT/OAuth, webhook secret, and local MCP stdio configuration steps.
 - [Deployment Guide](./docs/deployment/README.md) · [Environment Variables](./docs/deployment/environment-variables.md) · [Secrets & Encryption](./docs/deployment/secrets-and-encryption.md)
 - [Worker & Operations Runbook](./docs/deployment/worker-and-operations.md) · [CI/CD & Readiness](./docs/deployment/ci-cd-and-readiness.md)
 - [Database Architecture](./docs/database.md) · [Authentication](./docs/authentication.md) · [Membership & RBAC](./docs/membership.md) · [Logging](./docs/logging.md)

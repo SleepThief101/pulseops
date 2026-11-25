@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
 from typing import Any
 import uuid
 
 from arq import Retry, create_pool
 from arq.connections import RedisSettings
+from sqlalchemy import select
 
 from app.config import settings
 from app.db.session import SessionLocal
+from app.models.sync_run import SyncRun, SyncRunStatus
 from app.services import integration_service
 
 logger = logging.getLogger("app.worker")
@@ -17,6 +20,32 @@ logger = logging.getLogger("app.worker")
 def get_redis_settings() -> RedisSettings:
     """Parse REDIS_URL (including rediss:// TLS URLs) into ARQ RedisSettings."""
     return RedisSettings.from_dsn(settings.redis_url)
+
+
+def _mark_sync_run_failed(
+    db: Any,
+    *,
+    organization_id: uuid.UUID,
+    sync_run_id: uuid.UUID | None,
+    error_message: str,
+) -> None:
+    if sync_run_id is None:
+        return
+    try:
+        db.rollback()
+        run = db.scalar(
+            select(SyncRun).where(
+                SyncRun.id == sync_run_id,
+                SyncRun.organization_id == organization_id,
+            )
+        )
+        if run is not None and run.status != SyncRunStatus.FAILED.value:
+            run.status = SyncRunStatus.FAILED.value
+            run.error_message = error_message[:1000]
+            run.finished_at = datetime.now(timezone.utc)
+            db.commit()
+    except Exception:
+        logger.warning("Unable to mark failed SyncRun status cleanly.", extra={"org_id": str(organization_id)})
 
 
 async def sync_integration_job(
@@ -58,6 +87,12 @@ async def sync_integration_job(
         )
         if job_try < WorkerSettings.max_tries:
             raise Retry(defer=job_try * 5) from exc
+        _mark_sync_run_failed(
+            db,
+            organization_id=org_uuid,
+            sync_run_id=run_uuid,
+            error_message=str(exc),
+        )
         raise
     finally:
         db.close()
@@ -70,7 +105,7 @@ async def enqueue_sync_job(
     sync_run_id: uuid.UUID,
     full_sync: bool = False,
 ) -> str | None:
-    """Enqueue an integration sync job onto Redis/ARQ and return job ID."""
+    """Enqueue an integration sync job onto Redis/ARQ with deterministic job ID deduplication."""
     pool = await create_pool(get_redis_settings())
     try:
         job = await pool.enqueue_job(
@@ -79,6 +114,7 @@ async def enqueue_sync_job(
             str(integration_id),
             str(sync_run_id),
             full_sync,
+            _job_id=f"sync:{organization_id}:{integration_id}:{sync_run_id}",
         )
         return job.job_id if job is not None else None
     finally:

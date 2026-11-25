@@ -296,6 +296,56 @@ class TestWorkerAndSyncRuns:
                 str(uuid.uuid4()),
             )
 
+    @pytest.mark.anyio
+    async def test_worker_final_retry_marks_sync_run_failed(
+        self, wm_env, monkeypatch
+    ):
+        org, _, owner_tok = wm_env.make_org_owner()
+        headers = {"Authorization": f"Bearer {owner_tok}"}
+        integ = wm_env.client.post(
+            f"/orgs/{org.id}/integrations",
+            json={"provider": "fake", "credentials": {}},
+            headers=headers,
+        ).json()
+
+        class NonClosingSessionProxy:
+            def __init__(self, inner: Session):
+                self._inner = inner
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            def close(self):
+                pass
+
+        from app.services import integration_service
+
+        run = integration_service.create_pending_sync_run(
+            wm_env.session,
+            organization_id=org.id,
+            integration_id=uuid.UUID(integ["id"]),
+        )
+        monkeypatch.setattr(
+            worker, "SessionLocal", lambda: NonClosingSessionProxy(wm_env.session)
+        )
+        monkeypatch.setattr(
+            "app.services.integration_service.sync_integration",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("fatal sync crash")),
+        )
+
+        with pytest.raises(RuntimeError, match="fatal sync crash"):
+            await worker.sync_integration_job(
+                {"job_try": worker.WorkerSettings.max_tries},
+                str(org.id),
+                integ["id"],
+                str(run.id),
+            )
+
+        runs = wm_env.client.get(f"/orgs/{org.id}/sync-runs", headers=headers).json()
+        assert len(runs) == 1
+        assert runs[0]["status"] == SyncRunStatus.FAILED.value
+        assert "fatal sync crash" in (runs[0]["error_message"] or "")
+
 
 # ---------------------------------------------------------------------------
 # S19–S21: Metrics Engine, Events API & Multi-Tenant Isolation

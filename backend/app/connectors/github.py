@@ -146,7 +146,9 @@ class GitHubConnector(BaseConnector):
             if since_utc is not None:
                 events = [e for e in events if e.occurred_at >= since_utc]
             return events
-        except (httpx.HTTPError, ConnectorError) as exc:
+        except ConnectorAuthError:
+            raise
+        except (httpx.HTTPError, ConnectorError, ValueError) as exc:
             raise ConnectorError(f"GitHub API sync failed: {exc}") from exc
 
     def _fetch_repo_records(
@@ -158,7 +160,12 @@ class GitHubConnector(BaseConnector):
         per_page: int = 100,
         max_pages: int = 10,
     ) -> list[dict[str, Any]]:
-        pr_base_params: dict[str, Any] = {"state": "all", "per_page": per_page}
+        pr_base_params: dict[str, Any] = {
+            "state": "all",
+            "sort": "updated",
+            "direction": "desc",
+            "per_page": per_page,
+        }
         issue_base_params: dict[str, Any] = {"state": "all", "per_page": per_page}
         if since is not None:
             issue_base_params["since"] = since.isoformat()
@@ -175,8 +182,19 @@ class GitHubConnector(BaseConnector):
                         resp = client.get(url, headers=headers, params=params)
                 if resp.status_code == 401:
                     raise ConnectorAuthError("GitHub rejected the access token.")
+                if resp.status_code == 403:
+                    raise ConnectorAuthError(
+                        "GitHub denied access (token permissions or API rate limit exceeded)."
+                    )
+                if resp.status_code == 404:
+                    raise ConnectorError(
+                        f"GitHub repository {repo!r} was not found or token lacks read access."
+                    )
                 resp.raise_for_status()
-                batch = list(resp.json())
+                batch_raw = resp.json()
+                if not isinstance(batch_raw, list):
+                    raise ConnectorError("Unexpected non-list response from GitHub API.")
+                batch = list(batch_raw)
                 collected.extend(batch)
                 if len(batch) < per_page:
                     break

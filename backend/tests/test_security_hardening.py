@@ -281,6 +281,70 @@ class TestMCPAuthAndIsolation:
         with pytest.raises(MCPAuthError, match="expired"):
             mcp_server.pulseops_metrics_summary(str(org_a.id), api_key=expired_raw)
 
+    @pytest.mark.anyio
+    async def test_mcp_protocol_client_session_auth_validation_and_isolation(
+        self, sec_env, monkeypatch
+    ):
+        import anyio
+        from mcp.client.session import ClientSession
+        from mcp.shared.memory import create_client_server_memory_streams
+
+        from app import mcp_server
+
+        monkeypatch.setattr(mcp_server, "_session_factory", sec_env.mcp_session_factory)
+        monkeypatch.delenv("PULSEOPS_MCP_API_KEY", raising=False)
+
+        org_a, _, tok_a = sec_env.make_org_user()
+        org_b, _, _ = sec_env.make_org_user()
+        issued = sec_env.client.post(
+            "/me/api-keys",
+            json={"name": "Protocol Client Key"},
+            headers={"Authorization": f"Bearer {tok_a}"},
+        ).json()
+        raw_key = issued["api_key"]
+
+        async with create_client_server_memory_streams() as (client_streams, server_streams):
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(
+                    mcp_server.mcp._lowlevel_server.run,
+                    server_streams[0],
+                    server_streams[1],
+                    mcp_server.mcp._lowlevel_server.create_initialization_options(),
+                )
+                async with ClientSession(*client_streams) as session:
+                    await session.initialize()
+                    tools_res = await session.list_tools()
+                    tool_names = {t.name for t in tools_res.tools}
+                    assert {
+                        "pulseops_list_my_organizations",
+                        "pulseops_metrics_summary",
+                        "pulseops_recent_events",
+                        "pulseops_list_integrations",
+                    }.issubset(tool_names)
+
+                    ok_res = await session.call_tool(
+                        "pulseops_metrics_summary",
+                        {"organization_id": str(org_a.id), "days": 30, "api_key": raw_key},
+                    )
+                    assert ok_res.is_error is False
+                    assert str(org_a.id) in ok_res.content[0].text
+
+                    # Cross-tenant org rejected cleanly over MCP protocol
+                    cross_res = await session.call_tool(
+                        "pulseops_metrics_summary",
+                        {"organization_id": str(org_b.id), "days": 30, "api_key": raw_key},
+                    )
+                    assert cross_res.is_error is True
+
+                    # Invalid schema parameter (days=0) rejected over MCP protocol
+                    invalid_res = await session.call_tool(
+                        "pulseops_metrics_summary",
+                        {"organization_id": str(org_a.id), "days": 0, "api_key": raw_key},
+                    )
+                    assert invalid_res.is_error is True
+
+                tg.cancel_scope.cancel()
+
 
 # ---------------------------------------------------------------------------
 # 2. AI Tool Execution Security & Approval Bypass Prevention

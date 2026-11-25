@@ -28,6 +28,7 @@ from app.models.action_proposal import ProposalStatus
 from app.models.membership import Membership, MembershipRole
 from app.models.organization import Organization
 from app.models.user import User
+from app.services import copilot_service
 
 TEST_JWT_SECRET = "unit-test-only-jwt-secret-key-minimum-32-bytes"
 
@@ -253,6 +254,76 @@ class TestDeepSeekAndFallback:
         assert len(res.pending_proposals) == 1
         assert res.pending_proposals[0].status == ProposalStatus.PENDING.value
         assert res.pending_proposals[0].tool_name == "sync_organization_integration"
+
+    def test_deepseek_error_scenarios_fall_back_gracefully_without_leaking_keys(
+        self, ai_env
+    ):
+        org, user, owner_tok = ai_env.make_org_user()
+        headers = {"Authorization": f"Bearer {owner_tok}"}
+
+        # Unavailable data case -> explicitly distinguishes no-data from zero values
+        empty_res = ai_env.client.post(
+            f"/orgs/{org.id}/copilot/chat",
+            json={"message": "What is our MRR?"},
+            headers=headers,
+        )
+        assert empty_res.status_code == 200
+        assert "No events ingested" in empty_res.json()["reply"]
+
+        # Add a failed payment CSV row so failed payments summary is verified
+        from datetime import datetime, timezone
+
+        ai_env.client.post(
+            f"/orgs/{org.id}/imports/csv",
+            json={
+                "csv_text": (
+                    "event_type,occurred_at,amount_cents,currency,actor\n"
+                    f"payment.failed,{datetime.now(timezone.utc).isoformat()},4900,USD,cust_fail\n"
+                )
+            },
+            headers=headers,
+        )
+
+        # Test 401 invalid key, 429 rate limit, timeout, and malformed provider JSON
+        def timeout_handler(_r: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("request timed out")
+
+        error_cases = [
+            (httpx.MockTransport(lambda _r: httpx.Response(401)), "authentication failed"),
+            (httpx.MockTransport(lambda _r: httpx.Response(429)), "rate limit"),
+            (httpx.MockTransport(timeout_handler), "timed out"),
+            (
+                httpx.MockTransport(lambda _r: httpx.Response(200, json={"choices": []})),
+                "Net MRR",
+            ),
+            (
+                httpx.MockTransport(lambda _r: httpx.Response(200, content=b"<html>bad</html>")),
+                "Net MRR",
+            ),
+        ]
+
+        secret_key = "sk-should-never-appear-anywhere-in-reply"
+        for idx, (transport, expected_err_or_fallback) in enumerate(error_cases):
+            client = DeepSeekClient(
+                api_key=secret_key,
+                http_client=httpx.Client(transport=transport),
+            )
+            if idx < 3:
+                with pytest.raises(DeepSeekError, match=expected_err_or_fallback) as exc_info:
+                    client.chat_completions(messages=[{"role": "user", "content": "hi"}])
+                assert secret_key not in str(exc_info.value)
+
+            # Copilot chat falls back transparently and summarizes failed payments
+            res = copilot_service.run_copilot_chat(
+                ai_env.session,
+                organization_id=org.id,
+                user_id=user.id,
+                message=f"Summarize failed payments #{idx}",
+                deepseek_client=client,
+            )
+            assert res.fallback_mode is True
+            assert "Failed Payments: 1 failed ($49.00)" in res.reply
+            assert secret_key not in res.reply
 
 
 # ---------------------------------------------------------------------------
